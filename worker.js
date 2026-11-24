@@ -1,7 +1,15 @@
 
+const CACHE_SECONDS = 300;
+const BACKUP_SECONDS = 86400;
+const RETRY_SECONDS = 120;
+
+let consultaEmAndamento = null;
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    // ESCUDOS DOS TIMES
     if (/^\/escudos\/\d+\.png$/.test(url.pathname)) {
       const id = url.pathname.split("/").pop();
 
@@ -22,21 +30,27 @@ export default {
             "Cache-Control": "public, max-age=86400"
           }
         });
+
       } catch {
         return new Response("Falha ao carregar escudo", {
           status: 502
         });
       }
     }
+
+    // STATUS DO SISTEMA
     if (url.pathname === "/api/status") {
       return Response.json({
         sistema: "GOLSKY",
         status: "online",
-        apiConfigurada: Boolean(env.API_FOOTBALL_KEY)
+        apiConfigurada: Boolean(env.API_FOOTBALL_KEY),
+        cacheSegundos: CACHE_SECONDS
       });
     }
 
+    // JOGOS AO VIVO
     if (url.pathname === "/api/jogos") {
+
       if (!env.API_FOOTBALL_KEY) {
         return Response.json({
           erro: "API nao configurada"
@@ -44,10 +58,54 @@ export default {
       }
 
       const cache = caches.default;
+
       const cacheKey = new Request(
         url.origin + "/api/jogos",
         { method: "GET" }
       );
+
+      const backupKey = new Request(
+        url.origin + "/api/cache-backup",
+        { method: "GET" }
+      );
+
+      const retryKey = new Request(
+        url.origin + "/api/cache-retry",
+        { method: "GET" }
+      );
+
+      async function usarBackup() {
+        const backup = await cache.match(backupKey);
+
+        if (backup) {
+          const dados = await backup.json();
+
+          return Response.json({
+            ...dados,
+            golsky: {
+              ...dados.golsky,
+              desatualizado: true,
+              aviso: "Exibindo ultima consulta disponivel"
+            }
+          }, {
+            headers: {
+              "Cache-Control": "no-store",
+              "X-GOLSKY-Cache": "BACKUP"
+            }
+          });
+        }
+
+        return Response.json({
+          erro: "Atualizacao temporariamente indisponivel",
+          response: []
+        }, {
+          status: 503,
+          headers: {
+            "Cache-Control": "no-store",
+            "Retry-After": String(RETRY_SECONDS)
+          }
+        });
+      }
 
       try {
         const cached = await cache.match(cacheKey);
@@ -56,52 +114,96 @@ export default {
           return cached;
         }
 
-        const resposta = await fetch(
-          "https://v3.football.api-sports.io/fixtures?live=all",
-          {
-            headers: {
-              "x-apisports-key": env.API_FOOTBALL_KEY.trim()
-            }
-          }
-        );
+        const bloqueio = await cache.match(retryKey);
 
-        const dados = await resposta.json();
+        if (bloqueio) {
+          return await usarBackup();
+        }
 
-        if (
-          !resposta.ok ||
-          Object.keys(dados.errors || {}).length > 0 ||
-          !Array.isArray(dados.response)
-        ) {
-          return Response.json(dados, {
-            status: dados.errors?.rateLimit ? 429 : 502,
-            headers: {
-              "Cache-Control": "no-store"
+        if (!consultaEmAndamento) {
+
+          consultaEmAndamento = (async () => {
+
+            try {
+              const resposta = await fetch(
+                "https://v3.football.api-sports.io/fixtures?live=all",
+                {
+                  headers: {
+                    "x-apisports-key":
+                      env.API_FOOTBALL_KEY.trim()
+                  }
+                }
+              );
+
+              const dados = await resposta.json();
+
+              if (
+                !resposta.ok ||
+                Object.keys(dados.errors || {}).length > 0 ||
+                !Array.isArray(dados.response)
+              ) {
+                throw new Error("Falha na API");
+              }
+
+              dados.golsky = {
+                atualizadoEm: new Date().toISOString(),
+                desatualizado: false
+              };
+
+              const resultado = Response.json(dados, {
+                headers: {
+                  "Cache-Control":
+                    "public, max-age=" + CACHE_SECONDS,
+                  "X-GOLSKY-Cache": "FRESH"
+                }
+              });
+
+              const backup = Response.json(dados, {
+                headers: {
+                  "Cache-Control":
+                    "public, max-age=" + BACKUP_SECONDS
+                }
+              });
+
+              await Promise.allSettled([
+                cache.put(cacheKey, resultado.clone()),
+                cache.put(backupKey, backup)
+              ]);
+
+              return resultado;
+
+            } catch (erro) {
+
+              console.error("GOLSKY:", erro.message);
+
+              try {
+                await cache.put(
+                  retryKey,
+                  new Response("aguarde", {
+                    headers: {
+                      "Cache-Control":
+                        "public, max-age=" + RETRY_SECONDS
+                    }
+                  })
+                );
+              } catch {}
+
+              return await usarBackup();
             }
+
+          })().finally(() => {
+            consultaEmAndamento = null;
           });
         }
 
-        const resultado = Response.json(dados, {
-          headers: {
-            "Cache-Control": "public, max-age=90",
-            "X-GOLSKY-Cache": "90s"
-          }
-        });
+        return (await consultaEmAndamento).clone();
 
-        try {
-          await cache.put(cacheKey, resultado.clone());
-        } catch (erro) {
-          console.error("Erro no cache:", erro);
-        }
-
-        return resultado;
-
-      } catch (erro) {
-        return Response.json({
-          erro: "Falha na consulta dos jogos"
-        }, { status: 502 });
+      } catch {
+        return await usarBackup();
       }
     }
 
+    // SITE PRINCIPAL
     return env.ASSETS.fetch(request);
   }
 };
