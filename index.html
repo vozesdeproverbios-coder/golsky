@@ -1,5 +1,4 @@
- 
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -12,19 +11,29 @@ header{background:#111f35;padding:24px;border-bottom:1px solid #263750}
 .wrap{max-width:1000px;margin:auto;padding:20px}
 .brand{font-size:32px;font-weight:bold}
 .brand span{color:#39e58c}
-h1{font-size:32px}
+h1{font-size:28px}
 p{color:#aabbd0}
 button{background:#39e58c;color:#081b12;border:0;padding:14px 22px;border-radius:8px;font-weight:bold;cursor:pointer}
-button:disabled{opacity:.5;cursor:default}
-.game{background:#15243b;border:1px solid #293e58;border-radius:12px;padding:20px;margin:15px 0}
-.league{color:#aabbd0;font-size:13px;margin-bottom:20px}
+button:disabled{opacity:.6;cursor:default}
+.championship{margin:20px 0;border:1px solid var(--color);border-radius:12px;overflow:hidden;background:#15243b}
+summary{background:var(--color);padding:16px;font-weight:bold;cursor:pointer}
+.game{padding:20px;border-bottom:1px solid #293e58}
+.game:last-child{border-bottom:0}
 .teams{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;text-align:center}
 .team img{width:48px;height:48px;object-fit:contain}
 .team strong{display:block;margin-top:8px}
 .score{font-size:28px;font-weight:bold}
-.live{color:#39e58c;margin-top:18px;font-size:14px}
-#status{margin:20px 0;color:#aabbd0}
-footer{text-align:center;padding:30px;color:#aabbd0;font-size:13px}
+.live{color:#39e58c;font-size:13px;font-weight:bold;margin-top:14px}
+footer{text-align:center;color:#aabbd0;padding:25px;font-size:13px}
+#status{margin:16px 0;color:#aabbd0}
+@media(max-width:600px){
+.wrap{padding:12px}
+.game{padding:14px}
+.team strong{font-size:12px}
+.team img{width:36px;height:36px}
+.score{font-size:23px}
+summary{font-size:14px}
+}
 </style>
 </head>
 <body>
@@ -34,98 +43,188 @@ footer{text-align:center;padding:30px;color:#aabbd0;font-size:13px}
 <p>O mundo do futebol em um só lugar</p>
 </div>
 </header>
+
 <main class="wrap">
 <h1>Futebol ao vivo</h1>
 <p>Acompanhe partidas e placares reais.</p>
-<button id="refresh">↻ Consultar jogos</button>
-<div id="status" aria-live="polite">
-Clique no botão para consultar as partidas.
-</div>
+<button id="refresh">Atualizar partidas</button>
+<div id="status">Consultando partidas...</div>
 <div id="games"></div>
 </main>
+
 <footer>GOLSKY • Dados fornecidos pela API-Football</footer>
+
 <script>
 const games=document.getElementById("games");
 const statusBox=document.getElementById("status");
 const button=document.getElementById("refresh");
 
+const championships={
+71:["🇧🇷 Brasileirão Série A","#168447",1],
+72:["🇧🇷 Brasileirão Série B","#927014",2],
+75:["🇧🇷 Brasileirão Série C","#b85d16",3],
+76:["🇧🇷 Brasileirão Série D","#247da3",4],
+73:["🇧🇷 Copa do Brasil","#087e86",5],
+13:["🏆 Copa Libertadores","#8b692c",6],
+11:["🏆 Copa Sul-Americana","#596879",7],
+2:["🇪🇺 Champions League","#244bc1",8],
+3:["🇪🇺 Europa League","#b75b18",9],
+39:["🏴 Premier League","#713b99",10],
+140:["🇪🇸 La Liga","#b53d42",11],
+78:["🇩🇪 Bundesliga","#9d252e",12],
+135:["🇮🇹 Campeonato Italiano","#215caa",13],
+61:["🇫🇷 Ligue 1","#315d50",14],
+94:["🇵🇹 Campeonato Português","#9b3445",15],
+1:["🌍 Copa do Mundo","#78394d",16]
+};
+
 function element(tag,cls,text){
- const el=document.createElement(tag);
- el.className=cls;
- if(text!==undefined)el.textContent=text;
- return el;
+const el=document.createElement(tag);
+el.className=cls;
+if(text!==undefined)el.textContent=text;
+return el;
 }
 
 function team(data){
- const el=element("div","team");
- const img=document.createElement("img");
- img.src="/escudos/"+data.id+".png";img.onerror = () => {
-  img.replaceWith(document.createTextNode("⚽"));
+const el=element("div","team");
+const img=document.createElement("img");
+img.alt="";
+img.loading="lazy";
+img.onerror=()=>{
+img.replaceWith(document.createTextNode("⚽"));
 };
- img.alt="";
- img.loading="lazy";
- el.append(img,element("strong","",data.name));
- return el;
+img.src="/escudos/"+data.id+".png";
+el.append(img,element("strong","",data.name));
+return el;
+}
+
+function leagueInfo(league){
+return championships[league.id]||[
+league.country+" • "+league.name,
+"#344e70",
+league.country==="Brazil"?20:100
+];
+}
+
+function renderGames(list){
+const groups=new Map();
+const closed=new Set(
+Array.from(games.querySelectorAll("details:not([open])"))
+.map(el=>el.dataset.league)
+);
+
+list.forEach(g=>{
+const id=g.league.id;
+if(!groups.has(id)){
+groups.set(id,{
+id:id,
+info:leagueInfo(g.league),
+matches:[]
+});
+}
+groups.get(id).matches.push(g);
+});
+
+const ordered=Array.from(groups.values()).sort((a,b)=>
+a.info[2]-b.info[2]||
+a.info[0].localeCompare(b.info[0])
+);
+
+const fragment=document.createDocumentFragment();
+
+ordered.forEach(group=>{
+const section=element("details","championship");
+section.dataset.league=String(group.id);
+section.open=!closed.has(String(group.id));
+section.style.setProperty("--color",group.info[1]);
+
+const heading=element(
+"summary","",
+group.info[0]+" • "+group.matches.length+" jogo(s)"
+);
+section.append(heading);
+
+group.matches.forEach(g=>{
+const card=element("article","game");
+const teams=element("div","teams");
+const score=element("div","score",
+(g.goals.home??"-")+" : "+(g.goals.away??"-")
+);
+
+teams.append(
+team(g.teams.home),
+score,
+team(g.teams.away)
+);
+
+const minute=g.fixture.status.elapsed;
+const short=g.fixture.status.short;
+
+const label=short==="HT"?"INTERVALO":
+short==="BT"?"INTERVALO DA PRORROGAÇÃO":
+short==="P"?"PÊNALTIS":
+short==="SUSP"?"SUSPENSO":
+short==="INT"?"INTERROMPIDO":
+"● AO VIVO"+(minute!=null?" • "+minute+" min":"");
+
+card.append(teams,element("div","live",label));
+section.append(card);
+});
+
+fragment.append(section);
+});
+
+games.replaceChildren(fragment);
+}
+
+function countdown(){
+let seconds=60;
+button.disabled=true;
+button.textContent="Aguarde "+seconds+"s";
+
+const timer=setInterval(()=>{
+seconds--;
+button.textContent="Aguarde "+seconds+"s";
+
+if(seconds<=0){
+clearInterval(timer);
+button.disabled=false;
+button.textContent="Atualizar partidas";
+}
+},1000);
 }
 
 async function loadGames(){
- button.disabled=true;
- statusBox.textContent="Consultando partidas...";
- try{
-  const res=await fetch("/api/jogos");
-  const data=await res.json();
+button.disabled=true;
+statusBox.textContent="Consultando partidas...";
 
-  if(!res.ok || Object.keys(data.errors||{}).length){
-   throw new Error("Consulta temporariamente indisponível.");
-  }
+try{
+const res=await fetch("/api/jogos");
+const data=await res.json();
 
-  if(!Array.isArray(data.response)){
-   throw new Error("Resposta inválida.");
-  }
+if(!res.ok||Object.keys(data.errors||{}).length){
+throw new Error("Consulta indisponível");
+}
 
-  games.replaceChildren();
+if(!Array.isArray(data.response)){
+throw new Error("Resposta inválida");
+}
 
-  data.response.forEach(g=>{
-   const card=element("article","game");
-   const league=element("div","league",
-    g.league.country+" • "+g.league.name);
-   const teams=element("div","teams");
-   const score=element("div","score",
-    (g.goals.home??"-")+" : "+(g.goals.away??"-"));
+renderGames(data.response);
 
-   teams.append(team(g.teams.home),score,team(g.teams.away));
+statusBox.textContent=data.response.length
+?data.response.length+" partida(s) • Consulta às "+new Date().toLocaleTimeString("pt-BR")
+:"Nenhuma partida ao vivo no momento.";
 
-   const live=element("div","live",
-    "● AO VIVO • "+(g.fixture.status.elapsed??0)+" min");
-
-   card.append(league,teams,live);
-   games.append(card);
-  });
-
-  statusBox.textContent=data.response.length
-   ? data.response.length+" partida(s) • Atualizado às "+
-     new Date().toLocaleTimeString("pt-BR")
-   : "Nenhuma partida ao vivo disponível.";
-
- }catch(e){
-  console.error("ERRO GOLSKY:", e);
-  statusBox.textContent="Não foi possível atualizar. Os dados anteriores, se exibidos, podem estar desatualizados.";
- }finally{
-  let seconds=60;
-  button.textContent="Aguarde "+seconds+"s";
-  const timer=setInterval(()=>{
-   seconds--;
-   button.textContent="Aguarde "+seconds+"s";
-   if(seconds<=0){
-    clearInterval(timer);
-    button.disabled=false;
-    button.textContent="↻ Atualizar jogos";
-   }
-  },1000);
- }
+}catch(error){
+statusBox.textContent="Não foi possível atualizar. Os dados anteriores, se exibidos, podem estar desatualizados.";
+}finally{
+countdown();
+}
 }
 
 button.addEventListener("click",loadGames);
+loadGames();
 </script>
 </body>
-</html>
+</html> 
