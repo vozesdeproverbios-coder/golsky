@@ -59,7 +59,9 @@ function element(tag,cls,text){
 function team(data){
  const el=element("div","team");
  const img=document.createElement("img");
- img.src=data.logo;
+ img.src=data.logo;img.onerror = () => {
+  img.replaceWith(document.createTextNode("⚽"));
+};
  img.alt="";
  img.loading="lazy";
  el.append(img,element("strong","",data.name));
