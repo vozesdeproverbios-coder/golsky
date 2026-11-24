@@ -2,7 +2,32 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (/^\/escudos\/\d+\.png$/.test(url.pathname)) {
+      const id = url.pathname.split("/").pop();
 
+      try {
+        const imagem = await fetch(
+          "https://media.api-sports.io/football/teams/" + id
+        );
+
+        if (!imagem.ok) {
+          return new Response("Escudo indisponivel", {
+            status: 404
+          });
+        }
+
+        return new Response(imagem.body, {
+          headers: {
+            "Content-Type": "image/png",
+            "Cache-Control": "public, max-age=86400"
+          }
+        });
+      } catch {
+        return new Response("Falha ao carregar escudo", {
+          status: 502
+        });
+      }
+    }
     if (url.pathname === "/api/status") {
       return Response.json({
         sistema: "GOLSKY",
