@@ -108,6 +108,7 @@ async function loadGames(){
    : "Nenhuma partida ao vivo disponível.";
 
  }catch(e){
+  console.error("ERRO GOLSKY:", e);
   statusBox.textContent="Não foi possível atualizar. Os dados anteriores, se exibidos, podem estar desatualizados.";
  }finally{
   let seconds=60;
