@@ -1,3 +1,4 @@
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -17,7 +18,19 @@ export default {
         }, { status: 503 });
       }
 
+      const cache = caches.default;
+      const cacheKey = new Request(
+        url.origin + "/api/jogos",
+        { method: "GET" }
+      );
+
       try {
+        const cached = await cache.match(cacheKey);
+
+        if (cached) {
+          return cached;
+        }
+
         const resposta = await fetch(
           "https://v3.football.api-sports.io/fixtures?live=all",
           {
@@ -29,10 +42,35 @@ export default {
 
         const dados = await resposta.json();
 
-        return Response.json(dados, {
-          status: resposta.status
+        if (
+          !resposta.ok ||
+          Object.keys(dados.errors || {}).length > 0 ||
+          !Array.isArray(dados.response)
+        ) {
+          return Response.json(dados, {
+            status: dados.errors?.rateLimit ? 429 : 502,
+            headers: {
+              "Cache-Control": "no-store"
+            }
+          });
+        }
+
+        const resultado = Response.json(dados, {
+          headers: {
+            "Cache-Control": "public, max-age=90",
+            "X-GOLSKY-Cache": "90s"
+          }
         });
-      } catch {
+
+        try {
+          await cache.put(cacheKey, resultado.clone());
+        } catch (erro) {
+          console.error("Erro no cache:", erro);
+        }
+
+        return resultado;
+
+      } catch (erro) {
         return Response.json({
           erro: "Falha na consulta dos jogos"
         }, { status: 502 });
