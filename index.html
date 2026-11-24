@@ -59,7 +59,7 @@ function element(tag,cls,text){
 function team(data){
  const el=element("div","team");
  const img=document.createElement("img");
- img.src=data.logo;img.onerror = () => {
+ img.src="/escudos/"+data.id+".png";img.onerror = () => {
   img.replaceWith(document.createTextNode("⚽"));
 };
  img.alt="";
