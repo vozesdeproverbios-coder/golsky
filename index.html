@@ -16,24 +16,134 @@ header{background:#111f35;padding:24px;border-bottom:1px solid #263750}
 h1{font-size:28px}
 p{color:#aabbd0}
 .date{color:#39e58c;font-size:18px;font-weight:bold;margin:15px 0}
-button{background:#39e58c;color:#081b12;border:0;padding:14px 22px;border-radius:8px;font-weight:bold;cursor:pointer}
+
+button{
+background:#39e58c;
+color:#081b12;
+border:0;
+padding:14px 22px;
+border-radius:8px;
+font-weight:bold;
+cursor:pointer
+}
+
 button:disabled{opacity:.6;cursor:default}
-.championship{margin:20px 0;border:1px solid var(--color);border-radius:12px;overflow:hidden;background:#15243b}
-summary{background:var(--color);padding:16px;font-weight:bold;cursor:pointer}
-.game{padding:20px;border-bottom:1px solid #293e58}
+
+.search{
+width:100%;
+padding:15px;
+margin:18px 0 12px;
+border:1px solid #344e70;
+border-radius:10px;
+background:#15243b;
+color:#fff;
+font-size:16px;
+outline:none
+}
+
+.search:focus{border-color:#39e58c}
+.search::placeholder{color:#aabbd0}
+
+.filters{
+display:flex;
+gap:8px;
+flex-wrap:wrap;
+margin-bottom:18px
+}
+
+.filter{
+background:#1c304c;
+color:#dbe8f7;
+padding:11px 16px;
+border:1px solid #344e70
+}
+
+.filter.active{
+background:#39e58c;
+color:#081b12;
+border-color:#39e58c
+}
+
+.championship{
+margin:20px 0;
+border:1px solid var(--color);
+border-radius:12px;
+overflow:hidden;
+background:#15243b
+}
+
+summary{
+background:var(--color);
+padding:16px;
+font-weight:bold;
+cursor:pointer
+}
+
+.game{
+padding:20px;
+border-bottom:1px solid #293e58
+}
+
 .game:last-child{border-bottom:0}
-.teams{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;text-align:center}
-.team img{width:48px;height:48px;object-fit:contain}
-.team strong{display:block;margin-top:8px}
+
+.teams{
+display:grid;
+grid-template-columns:1fr auto 1fr;
+align-items:center;
+gap:12px;
+text-align:center
+}
+
+.team img{
+width:48px;
+height:48px;
+object-fit:contain
+}
+
+.team strong{
+display:block;
+margin-top:8px
+}
+
 .score{font-size:28px;font-weight:bold}
-.match-date{text-align:center;color:#aabbd0;font-size:13px;margin-bottom:16px}
-.match-status{font-size:13px;font-weight:bold;margin-top:14px;text-align:center}
+
+.match-date{
+text-align:center;
+color:#aabbd0;
+font-size:13px;
+margin-bottom:16px
+}
+
+.match-status{
+font-size:13px;
+font-weight:bold;
+margin-top:14px;
+text-align:center
+}
+
 .live{color:#39e58c}
 .scheduled{color:#75baff}
 .finished{color:#aabbd0}
 .warning{color:#ffca55}
-footer{text-align:center;color:#aabbd0;padding:25px;font-size:13px}
+
+.empty{
+padding:30px;
+text-align:center;
+background:#15243b;
+border-radius:10px;
+color:#aabbd0
+}
+
+footer{
+text-align:center;
+color:#aabbd0;
+padding:25px;
+font-size:13px
+}
+
 #status{margin:16px 0;color:#aabbd0}
+#filtered{color:#aabbd0;font-size:13px}
+
 @media(max-width:600px){
 .wrap{padding:12px}
 .game{padding:14px}
@@ -41,6 +151,8 @@ footer{text-align:center;color:#aabbd0;padding:25px;font-size:13px}
 .team img{width:36px;height:36px}
 .score{font-size:23px}
 summary{font-size:14px}
+.filter{padding:10px 12px;font-size:12px}
+header{padding:12px}
 }
 </style>
 </head>
@@ -55,6 +167,7 @@ summary{font-size:14px}
 </header>
 
 <main class="wrap">
+
 <h1>Jogos de hoje</h1>
 <p>Acompanhe partidas, horários e placares.</p>
 
@@ -63,7 +176,26 @@ summary{font-size:14px}
 <button id="refresh">Atualizar partidas</button>
 
 <div id="status">Consultando partidas...</div>
+
+<input
+id="search"
+class="search"
+type="search"
+placeholder="🔍 Pesquisar time ou campeonato"
+aria-label="Pesquisar time ou campeonato"
+autocomplete="off"
+>
+
+<div class="filters">
+<button class="filter active" data-filter="all">Todos</button>
+<button class="filter" data-filter="live">🔴 Ao vivo</button>
+<button class="filter" data-filter="scheduled">Agendados</button>
+<button class="filter" data-filter="finished">Encerrados</button>
+</div>
+
+<div id="filtered"></div>
 <div id="games"></div>
+
 </main>
 
 <footer>
@@ -76,11 +208,22 @@ const games=document.getElementById("games");
 const statusBox=document.getElementById("status");
 const button=document.getElementById("refresh");
 const today=document.getElementById("today");
+const search=document.getElementById("search");
+const filtered=document.getElementById("filtered");
 
 const TIMEZONE="America/Sao_Paulo";
 
 let timer=null;
 let loading=false;
+let allGames=[];
+let currentFilter="all";
+let hasData=false;
+
+const closedLeagues=new Set();
+
+const liveCodes=["1H","2H","HT","ET","BT","P","LIVE"];
+const scheduledCodes=["NS","TBD"];
+const finishedCodes=["FT","AET","PEN","AWD","WO"];
 
 const championships={
 71:["🇧🇷 Brasileirão Série A","#168447",1],
@@ -101,6 +244,96 @@ const championships={
 1:["🌍 Copa do Mundo","#78394d",16]
 };
 
+const countries={
+"Brazil":["Brasil","🇧🇷"],
+"Argentina":["Argentina","🇦🇷"],
+"England":["Inglaterra","🏴"],
+"Spain":["Espanha","🇪🇸"],
+"Germany":["Alemanha","🇩🇪"],
+"Italy":["Itália","🇮🇹"],
+"France":["França","🇫🇷"],
+"Portugal":["Portugal","🇵🇹"],
+"Netherlands":["Holanda","🇳🇱"],
+"Belgium":["Bélgica","🇧🇪"],
+"Turkey":["Turquia","🇹🇷"],
+"Scotland":["Escócia","🏴"],
+"Mexico":["México","🇲🇽"],
+"USA":["Estados Unidos","🇺🇸"],
+"Canada":["Canadá","🇨🇦"],
+"Japan":["Japão","🇯🇵"],
+"China":["China","🇨🇳"],
+"South-Korea":["Coreia do Sul","🇰🇷"],
+"Saudi-Arabia":["Arábia Saudita","🇸🇦"],
+"Qatar":["Catar","🇶🇦"],
+"United-Arab-Emirates":["Emirados Árabes","🇦🇪"],
+"Uruguay":["Uruguai","🇺🇾"],
+"Paraguay":["Paraguai","🇵🇾"],
+"Chile":["Chile","🇨🇱"],
+"Colombia":["Colômbia","🇨🇴"],
+"Peru":["Peru","🇵🇪"],
+"Ecuador":["Equador","🇪🇨"],
+"Bolivia":["Bolívia","🇧🇴"],
+"Venezuela":["Venezuela","🇻🇪"],
+"Australia":["Austrália","🇦🇺"],
+"Russia":["Rússia","🇷🇺"],
+"Ukraine":["Ucrânia","🇺🇦"],
+"Poland":["Polônia","🇵🇱"],
+"Greece":["Grécia","🇬🇷"],
+"Switzerland":["Suíça","🇨🇭"],
+"Austria":["Áustria","🇦🇹"],
+"Denmark":["Dinamarca","🇩🇰"],
+"Sweden":["Suécia","🇸🇪"],
+"Norway":["Noruega","🇳🇴"],
+"Finland":["Finlândia","🇫🇮"],
+"Croatia":["Croácia","🇭🇷"],
+"Serbia":["Sérvia","🇷🇸"],
+"Romania":["Romênia","🇷🇴"],
+"Czech-Republic":["República Tcheca","🇨🇿"],
+"Hungary":["Hungria","🇭🇺"],
+"India":["Índia","🇮🇳"],
+"Indonesia":["Indonésia","🇮🇩"],
+"Thailand":["Tailândia","🇹🇭"],
+"Vietnam":["Vietnã","🇻🇳"],
+"Malaysia":["Malásia","🇲🇾"],
+"Egypt":["Egito","🇪🇬"],
+"Morocco":["Marrocos","🇲🇦"],
+"South-Africa":["África do Sul","🇿🇦"],
+"Nigeria":["Nigéria","🇳🇬"],
+"Tunisia":["Tunísia","🇹🇳"],
+"Algeria":["Argélia","🇩🇿"],
+"Israel":["Israel","🇮🇱"],
+"Iran":["Irã","🇮🇷"],
+"Iraq":["Iraque","🇮🇶"],
+"Azerbaijan":["Azerbaijão","🇦🇿"],
+"Kazakhstan":["Cazaquistão","🇰🇿"],
+"World":["Mundial","🌍"],
+"Europe":["Europa","🇪🇺"]
+};
+
+const palette=[
+"#176b45",
+"#2549a5",
+"#8b3c36",
+"#70409b",
+"#996020",
+"#087b83",
+"#96375e",
+"#405b9a",
+"#397245",
+"#8a482b",
+"#655397",
+"#216b91",
+"#9b3939",
+"#716522",
+"#476b77",
+"#8a397c"
+];
+
+function leagueColor(id){
+const number=Number(id)||0;
+return palette[Math.abs(number)%palette.length];
+}
+
 function updateDate(){
 today.textContent="📅 "+new Date().toLocaleDateString("pt-BR",{
 timeZone:TIMEZONE,
@@ -118,9 +351,17 @@ if(text!==undefined)el.textContent=text;
 return el;
 }
 
+function normalize(text){
+return String(text||"")
+.normalize("NFD")
+.replace(/[\u0300-\u036f]/g,"")
+.toLowerCase();
+}
+
 function team(data){
 const el=element("div","team");
 const img=document.createElement("img");
+
 img.alt="";
 img.loading="lazy";
 
@@ -136,11 +377,20 @@ return el;
 }
 
 function leagueInfo(league){
-return championships[league.id]||[
-league.country+" • "+league.name,
-"#344e70",
+
+if(championships[league.id]){
+return championships[league.id];
+}
+
+const country=countries[league.country]||
+[league.country||"Internacional","🌍"];
+
+return [
+country[1]+" "+country[0]+" • "+league.name,
+leagueColor(league.id),
 league.country==="Brazil"?20:100
 ];
+
 }
 
 function matchStatus(g){
@@ -233,16 +483,60 @@ minute:"2-digit"
 });
 
 return "📅 "+day+" • 🕒 "+hour;
+
+}
+
+function applyFilters(){
+
+if(!hasData)return;
+
+const term=normalize(search.value.trim());
+
+const list=allGames.filter(g=>{
+
+const code=g.fixture.status.short;
+
+if(currentFilter==="live"&&!liveCodes.includes(code)){
+return false;
+}
+
+if(currentFilter==="scheduled"&&!scheduledCodes.includes(code)){
+return false;
+}
+
+if(currentFilter==="finished"&&!finishedCodes.includes(code)){
+return false;
+}
+
+const content=normalize([
+g.teams.home.name,
+g.teams.away.name,
+g.league.name,
+g.league.country,
+leagueInfo(g.league)[0]
+].join(" "));
+
+return content.includes(term);
+
+});
+
+filtered.textContent=
+"Exibindo "+list.length+" de "+allGames.length+" partidas";
+
+renderGames(list);
+
 }
 
 function renderGames(list){
 
 const groups=new Map();
 
-const closed=new Set(
-Array.from(games.querySelectorAll("details:not([open])"))
-.map(el=>el.dataset.league)
+if(!list.length){
+games.replaceChildren(
+element("div","empty","Nenhuma partida encontrada.")
 );
+return;
+}
 
 list.forEach(g=>{
 
@@ -262,7 +556,7 @@ groups.get(id).matches.push(g);
 
 const ordered=Array.from(groups.values()).sort((a,b)=>
 a.info[2]-b.info[2]||
-a.info[0].localeCompare(b.info[0])
+a.info[0].localeCompare(b.info[0],"pt-BR")
 );
 
 const fragment=document.createDocumentFragment();
@@ -272,8 +566,19 @@ ordered.forEach(group=>{
 const section=element("details","championship");
 
 section.dataset.league=String(group.id);
-section.open=!closed.has(String(group.id));
+section.open=!closedLeagues.has(String(group.id));
+
 section.style.setProperty("--color",group.info[1]);
+
+section.addEventListener("toggle",()=>{
+
+if(section.open){
+closedLeagues.delete(String(group.id));
+}else{
+closedLeagues.add(String(group.id));
+}
+
+});
 
 const heading=element(
 "summary","",
@@ -381,23 +686,25 @@ if(!Array.isArray(data.response)){
 throw new Error("Resposta inválida");
 }
 
-renderGames(data.response);
+allGames=data.response;
+hasData=true;
 
-const liveCodes=["1H","2H","HT","ET","BT","P","LIVE"];
+applyFilters();
 
-const liveCount=data.response.filter(g=>
+const liveCount=allGames.filter(g=>
 liveCodes.includes(g.fixture.status.short)
 ).length;
 
-const updated=new Date(
-data.golsky?.atualizadoEm||Date.now()
-).toLocaleTimeString("pt-BR",{
+const updated=data.golsky?.atualizadoEm
+?new Date(data.golsky.atualizadoEm).toLocaleTimeString("pt-BR",{
 timeZone:TIMEZONE
-});
+})
+:null;
 
-statusBox.textContent=data.response.length
-?data.response.length+" partidas hoje • "+
-liveCount+" ao vivo • Atualizado às "+updated
+statusBox.textContent=allGames.length
+?allGames.length+" partidas hoje • "+
+liveCount+" ao vivo"+
+(updated?" • Atualizado às "+updated:"")
 :"Nenhuma partida disponível para hoje.";
 
 if(data.golsky?.desatualizado){
@@ -406,8 +713,9 @@ statusBox.textContent+=" • ⚠ Dados desatualizados";
 
 }catch(error){
 
-statusBox.textContent=
-"Não foi possível atualizar. Os dados anteriores podem estar desatualizados.";
+statusBox.textContent=hasData
+?"Não foi possível atualizar. Exibindo dados anteriores."
+:"Não foi possível consultar as partidas. Tentaremos novamente.";
 
 }finally{
 
@@ -417,6 +725,24 @@ countdown();
 }
 
 }
+
+document.querySelectorAll(".filter").forEach(btn=>{
+
+btn.addEventListener("click",()=>{
+
+currentFilter=btn.dataset.filter;
+
+document.querySelectorAll(".filter").forEach(b=>{
+b.classList.toggle("active",b===btn);
+});
+
+applyFilters();
+
+});
+
+});
+
+search.addEventListener("input",applyFilters);
 
 button.addEventListener("click",loadGames);
 
