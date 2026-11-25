@@ -750,5 +750,178 @@ button.addEventListener("click",loadGames);
 loadGames();
 
 </script>
+
+<style>
+.favorite-star{
+  display:block;
+  margin:10px auto 0;
+  padding:5px 12px;
+  background:transparent;
+  border:1px solid #52647c;
+  color:#aabbd0;
+  font-size:24px;
+  border-radius:8px;
+  cursor:pointer;
+}
+.favorite-star.selected{
+  color:#ffcc33;
+  border-color:#ffcc33;
+  background:#ffcc3315;
+}
+</style>
+
+<script>
+(function(){
+
+const storageKey="golsky_favoritos";
+let favoritos=new Set();
+
+try{
+  const saved=JSON.parse(
+    localStorage.getItem(storageKey)||"[]"
+  );
+  if(Array.isArray(saved)){
+    favoritos=new Set(saved.map(String));
+  }
+}catch(e){}
+
+const favoriteButton=element(
+  "button",
+  "filter",
+  "⭐ Meus favoritos"
+);
+
+favoriteButton.dataset.filter="favorites";
+
+document.querySelector(".filters")
+.appendChild(favoriteButton);
+
+favoriteButton.addEventListener("click",()=>{
+
+  currentFilter="favorites";
+
+  document.querySelectorAll(".filter")
+  .forEach(b=>{
+    b.classList.toggle(
+      "active",
+      b===favoriteButton
+    );
+  });
+
+  applyFilters();
+
+});
+
+const originalTeam=team;
+
+team=function(data){
+
+  const el=originalTeam(data);
+  const id=String(data.id);
+
+  const star=element(
+    "button",
+    "favorite-star"
+  );
+
+  star.type="button";
+
+  function updateStar(){
+
+    const selected=favoritos.has(id);
+
+    star.textContent=selected?"★":"☆";
+
+    star.classList.toggle(
+      "selected",selected
+    );
+
+    star.title=selected
+    ?"Remover dos favoritos"
+    :"Adicionar aos favoritos";
+
+    star.setAttribute(
+      "aria-label",
+      star.title+" - "+data.name
+    );
+
+    star.setAttribute(
+      "aria-pressed",
+      String(selected)
+    );
+
+  }
+
+  updateStar();
+
+  star.addEventListener("click",()=>{
+
+    if(favoritos.has(id)){
+      favoritos.delete(id);
+    }else{
+      favoritos.add(id);
+    }
+
+    try{
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify([...favoritos])
+      );
+    }catch(e){}
+
+    applyFilters();
+
+  });
+
+  el.appendChild(star);
+
+  return el;
+
+};
+
+const originalRender=renderGames;
+
+renderGames=function(list){
+
+  if(currentFilter==="favorites"){
+
+    list=list.filter(g=>
+      favoritos.has(String(g.teams.home.id))||
+      favoritos.has(String(g.teams.away.id))
+    );
+
+    filtered.textContent=
+      "Exibindo "+list.length+
+      " partidas dos seus times favoritos";
+
+    if(!list.length){
+
+      games.replaceChildren(
+        element(
+          "div",
+          "empty",
+          favoritos.size
+          ?"Seus times favoritos não têm partidas nesta seleção."
+          :"Marque a estrela abaixo dos seus times preferidos."
+        )
+      );
+
+      return;
+
+    }
+
+  }
+
+  originalRender(list);
+
+};
+
+if(hasData){
+  applyFilters();
+}
+
+})();
+</script>
+
 </body>
 </html>
