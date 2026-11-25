@@ -1,9 +1,11 @@
- <!DOCTYPE html>
+
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GOLSKY | Futebol ao vivo</title>
+
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#0b1425;color:#fff;font-family:Arial,sans-serif}
@@ -13,6 +15,7 @@ header{background:#111f35;padding:24px;border-bottom:1px solid #263750}
 .brand span{color:#39e58c}
 h1{font-size:28px}
 p{color:#aabbd0}
+.date{color:#39e58c;font-size:18px;font-weight:bold;margin:15px 0}
 button{background:#39e58c;color:#081b12;border:0;padding:14px 22px;border-radius:8px;font-weight:bold;cursor:pointer}
 button:disabled{opacity:.6;cursor:default}
 .championship{margin:20px 0;border:1px solid var(--color);border-radius:12px;overflow:hidden;background:#15243b}
@@ -23,7 +26,12 @@ summary{background:var(--color);padding:16px;font-weight:bold;cursor:pointer}
 .team img{width:48px;height:48px;object-fit:contain}
 .team strong{display:block;margin-top:8px}
 .score{font-size:28px;font-weight:bold}
-.live{color:#39e58c;font-size:13px;font-weight:bold;margin-top:14px}
+.match-date{text-align:center;color:#aabbd0;font-size:13px;margin-bottom:16px}
+.match-status{font-size:13px;font-weight:bold;margin-top:14px;text-align:center}
+.live{color:#39e58c}
+.scheduled{color:#75baff}
+.finished{color:#aabbd0}
+.warning{color:#ffca55}
 footer{text-align:center;color:#aabbd0;padding:25px;font-size:13px}
 #status{margin:16px 0;color:#aabbd0}
 @media(max-width:600px){
@@ -36,7 +44,9 @@ summary{font-size:14px}
 }
 </style>
 </head>
+
 <body>
+
 <header>
 <div class="wrap">
 <div class="brand">⚽ GOL<span>SKY</span></div>
@@ -45,19 +55,32 @@ summary{font-size:14px}
 </header>
 
 <main class="wrap">
-<h1>Futebol ao vivo</h1>
-<p>Acompanhe partidas e placares reais.</p>
+<h1>Jogos de hoje</h1>
+<p>Acompanhe partidas, horários e placares.</p>
+
+<div id="today" class="date"></div>
+
 <button id="refresh">Atualizar partidas</button>
+
 <div id="status">Consultando partidas...</div>
 <div id="games"></div>
 </main>
 
-<footer>GOLSKY • Dados fornecidos pela API-Football</footer>
+<footer>
+GOLSKY • Horário de Brasília • Dados fornecidos pela API-Football
+</footer>
 
 <script>
+
 const games=document.getElementById("games");
 const statusBox=document.getElementById("status");
 const button=document.getElementById("refresh");
+const today=document.getElementById("today");
+
+const TIMEZONE="America/Sao_Paulo";
+
+let timer=null;
+let loading=false;
 
 const championships={
 71:["🇧🇷 Brasileirão Série A","#168447",1],
@@ -78,6 +101,16 @@ const championships={
 1:["🌍 Copa do Mundo","#78394d",16]
 };
 
+function updateDate(){
+today.textContent="📅 "+new Date().toLocaleDateString("pt-BR",{
+timeZone:TIMEZONE,
+weekday:"long",
+day:"2-digit",
+month:"long",
+year:"numeric"
+});
+}
+
 function element(tag,cls,text){
 const el=document.createElement(tag);
 el.className=cls;
@@ -90,11 +123,15 @@ const el=element("div","team");
 const img=document.createElement("img");
 img.alt="";
 img.loading="lazy";
+
 img.onerror=()=>{
 img.replaceWith(document.createTextNode("⚽"));
 };
+
 img.src="/escudos/"+data.id+".png";
+
 el.append(img,element("strong","",data.name));
+
 return el;
 }
 
@@ -106,15 +143,111 @@ league.country==="Brazil"?20:100
 ];
 }
 
+function matchStatus(g){
+
+const short=g.fixture.status.short;
+const minute=g.fixture.status.elapsed;
+
+switch(short){
+
+case "NS":
+return ["🕒 AGENDADO","scheduled"];
+
+case "TBD":
+return ["HORÁRIO A DEFINIR","scheduled"];
+
+case "1H":
+case "2H":
+case "ET":
+case "LIVE":
+return [
+"● AO VIVO"+(minute!=null?" • "+minute+" min":""),
+"live"
+];
+
+case "HT":
+return ["● INTERVALO","live"];
+
+case "BT":
+return ["INTERVALO DA PRORROGAÇÃO","live"];
+
+case "P":
+return ["● PÊNALTIS","live"];
+
+case "FT":
+return ["✓ ENCERRADO","finished"];
+
+case "AET":
+return ["ENCERRADO APÓS PRORROGAÇÃO","finished"];
+
+case "PEN":
+return ["ENCERRADO NOS PÊNALTIS","finished"];
+
+case "PST":
+return ["ADIADO","warning"];
+
+case "CANC":
+return ["CANCELADO","warning"];
+
+case "ABD":
+return ["ABANDONADO","warning"];
+
+case "SUSP":
+return ["SUSPENSO","warning"];
+
+case "INT":
+return ["INTERROMPIDO","warning"];
+
+case "AWD":
+return ["RESULTADO ATRIBUÍDO","finished"];
+
+case "WO":
+return ["ENCERRADO POR W.O.","finished"];
+
+default:
+return ["STATUS INDISPONÍVEL","warning"];
+
+}
+}
+
+function matchDate(g){
+
+if(g.fixture.status.short==="TBD"){
+return "Horário a definir";
+}
+
+const date=new Date(g.fixture.date);
+
+if(Number.isNaN(date.getTime())){
+return "Data a confirmar";
+}
+
+const day=date.toLocaleDateString("pt-BR",{
+timeZone:TIMEZONE
+});
+
+const hour=date.toLocaleTimeString("pt-BR",{
+timeZone:TIMEZONE,
+hour:"2-digit",
+minute:"2-digit"
+});
+
+return "📅 "+day+" • 🕒 "+hour;
+}
+
 function renderGames(list){
+
 const groups=new Map();
+
 const closed=new Set(
 Array.from(games.querySelectorAll("details:not([open])"))
 .map(el=>el.dataset.league)
 );
 
 list.forEach(g=>{
+
 const id=g.league.id;
+
 if(!groups.has(id)){
 groups.set(id,{
 id:id,
@@ -122,7 +255,9 @@ info:leagueInfo(g.league),
 matches:[]
 });
 }
+
 groups.get(id).matches.push(g);
+
 });
 
 const ordered=Array.from(groups.values()).sort((a,b)=>
@@ -133,7 +268,9 @@ a.info[0].localeCompare(b.info[0])
 const fragment=document.createDocumentFragment();
 
 ordered.forEach(group=>{
+
 const section=element("details","championship");
+
 section.dataset.league=String(group.id);
 section.open=!closed.has(String(group.id));
 section.style.setProperty("--color",group.info[1]);
@@ -142,11 +279,23 @@ const heading=element(
 "summary","",
 group.info[0]+" • "+group.matches.length+" jogo(s)"
 );
+
 section.append(heading);
 
+group.matches.sort((a,b)=>
+new Date(a.fixture.date)-new Date(b.fixture.date)
+);
+
 group.matches.forEach(g=>{
+
 const card=element("article","game");
+
+const dateBox=element(
+"div","match-date",matchDate(g)
+);
+
 const teams=element("div","teams");
+
 const score=element("div","score",
 (g.goals.home??"-")+" : "+(g.goals.away??"-")
 );
@@ -157,49 +306,71 @@ score,
 team(g.teams.away)
 );
 
-const minute=g.fixture.status.elapsed;
-const short=g.fixture.status.short;
+const info=matchStatus(g);
 
-const label=short==="HT"?"INTERVALO":
-short==="BT"?"INTERVALO DA PRORROGAÇÃO":
-short==="P"?"PÊNALTIS":
-short==="SUSP"?"SUSPENSO":
-short==="INT"?"INTERROMPIDO":
-"● AO VIVO"+(minute!=null?" • "+minute+" min":"");
+const label=element(
+"div",
+"match-status "+info[1],
+info[0]
+);
 
-card.append(teams,element("div","live",label));
+card.append(dateBox,teams,label);
+
 section.append(card);
+
 });
 
 fragment.append(section);
+
 });
 
 games.replaceChildren(fragment);
+
 }
 
 function countdown(){
-let seconds=60;
-button.disabled=true;
-button.textContent="Aguarde "+seconds+"s";
 
-const timer=setInterval(()=>{
+clearInterval(timer);
+
+let seconds=60;
+
+button.disabled=false;
+button.textContent="Atualizar • "+seconds+"s";
+
+timer=setInterval(()=>{
+
 seconds--;
-button.textContent="Aguarde "+seconds+"s";
+
+button.textContent="Atualizar • "+seconds+"s";
 
 if(seconds<=0){
 clearInterval(timer);
-button.disabled=false;
-button.textContent="Atualizar partidas";
+loadGames();
 }
+
 },1000);
+
 }
 
 async function loadGames(){
+
+if(loading)return;
+
+loading=true;
+
+clearInterval(timer);
+
+updateDate();
+
 button.disabled=true;
-statusBox.textContent="Consultando partidas...";
+button.textContent="Consultando...";
 
 try{
-const res=await fetch("/api/jogos");
+
+const res=await fetch("/api/jogos",{
+cache:"no-store"
+});
+
 const data=await res.json();
 
 if(!res.ok||Object.keys(data.errors||{}).length){
@@ -212,19 +383,45 @@ throw new Error("Resposta inválida");
 
 renderGames(data.response);
 
+const liveCodes=["1H","2H","HT","ET","BT","P","LIVE"];
+
+const liveCount=data.response.filter(g=>
+liveCodes.includes(g.fixture.status.short)
+).length;
+
+const updated=new Date(
+data.golsky?.atualizadoEm||Date.now()
+).toLocaleTimeString("pt-BR",{
+timeZone:TIMEZONE
+});
+
 statusBox.textContent=data.response.length
-?data.response.length+" partida(s) • Consulta às "+new Date().toLocaleTimeString("pt-BR")
-:"Nenhuma partida ao vivo no momento.";
+?data.response.length+" partidas hoje • "+
+liveCount+" ao vivo • Atualizado às "+updated
+:"Nenhuma partida disponível para hoje.";
+
+if(data.golsky?.desatualizado){
+statusBox.textContent+=" • ⚠ Dados desatualizados";
+}
 
 }catch(error){
-statusBox.textContent="Não foi possível atualizar. Os dados anteriores, se exibidos, podem estar desatualizados.";
+
+statusBox.textContent=
+"Não foi possível atualizar. Os dados anteriores podem estar desatualizados.";
+
 }finally{
+
+loading=false;
 countdown();
+
 }
+
 }
 
 button.addEventListener("click",loadGames);
+
 loadGames();
+
 </script>
 </body>
-</html> 
+</html>
