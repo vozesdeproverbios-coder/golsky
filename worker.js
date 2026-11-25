@@ -1,7 +1,11 @@
+
 const CACHE_SECONDS = 300;
 const BACKUP_SECONDS = 86400;
 const RETRY_SECONDS = 120;
 const EVENTS_CACHE_SECONDS = 300;
+const FUTURE_CACHE_SECONDS = 10800;
+const YESTERDAY_CACHE_SECONDS = 21600;
+const HISTORY_CACHE_SECONDS = 86400;
 const TIMEZONE = "America/Sao_Paulo";
 
 export default {
@@ -44,10 +48,14 @@ export default {
         apiConfigurada: Boolean(env.API_FOOTBALL_KEY),
         cacheSegundos: CACHE_SECONDS,
         cacheEventos: EVENTS_CACHE_SECONDS,
+        cacheFuturo: FUTURE_CACHE_SECONDS,
+        cacheOntem: YESTERDAY_CACHE_SECONDS,
+        cacheHistorico: HISTORY_CACHE_SECONDS,
         timezone: TIMEZONE,
-        modo: "jogos-do-dia",
+        modo: "calendario-mundial",
+        calendario: true,
         eventos: true,
-        versao: "6.1"
+        versao: "6.2"
       });
     }
 
@@ -226,7 +234,7 @@ export default {
       }
     }
 
-    // CONSULTA DOS JOGOS
+    // CALENDARIO MUNDIAL DE JOGOS
     if (url.pathname === "/api/jogos") {
 
       if (!env.API_FOOTBALL_KEY) {
@@ -250,18 +258,79 @@ export default {
         obter("month") + "-" +
         obter("day");
 
+      // DATA ESCOLHIDA PELO USUARIO
+      const dataSolicitada =
+        url.searchParams.get("data") ??
+        url.searchParams.get("date") ??
+        hoje;
+
+      // VALIDACAO DA DATA
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dataSolicitada)) {
+        return Response.json({
+          erro: "Data invalida. Use AAAA-MM-DD"
+        }, { status: 400 });
+      }
+
+      const dataObjeto = new Date(
+        dataSolicitada + "T00:00:00Z"
+      );
+
+      if (
+        !Number.isFinite(dataObjeto.getTime()) ||
+        dataObjeto.toISOString().slice(0, 10) !== dataSolicitada
+      ) {
+        return Response.json({
+          erro: "Data inexistente"
+        }, { status: 400 });
+      }
+
+      const hojeObjeto = new Date(
+        hoje + "T00:00:00Z"
+      );
+
+      const diferencaDias = Math.round(
+        (dataObjeto - hojeObjeto) / 86400000
+      );
+
+      // LIMITE PARA PROTEGER A API GRATUITA
+      if (diferencaDias < -365 || diferencaDias > 90) {
+        return Response.json({
+          erro: "Data fora do periodo permitido",
+          limitePassado: 365,
+          limiteFuturo: 90
+        }, { status: 400 });
+      }
+
+      // CACHE INTELIGENTE POR DATA
+      let tempoCache = CACHE_SECONDS;
+      let periodo = "hoje";
+
+      if (diferencaDias === -1) {
+        tempoCache = YESTERDAY_CACHE_SECONDS;
+        periodo = "ontem";
+      } else if (diferencaDias < -1) {
+        tempoCache = HISTORY_CACHE_SECONDS;
+        periodo = "historico";
+      } else if (diferencaDias > 0) {
+        tempoCache = FUTURE_CACHE_SECONDS;
+        periodo = "futuro";
+      }
+
       const cache = caches.default;
 
       const cacheKey = new Request(
-        url.origin + "/api/cache-jogos/" + hoje
+        url.origin + "/api/cache-jogos-v62/" +
+        dataSolicitada + "/" + periodo
       );
 
       const backupKey = new Request(
-        url.origin + "/api/cache-backup/" + hoje
+        url.origin + "/api/cache-backup/" +
+        dataSolicitada
       );
 
       const retryKey = new Request(
-        url.origin + "/api/cache-retry/" + hoje
+        url.origin + "/api/cache-retry/" +
+        dataSolicitada
       );
 
       async function usarBackup() {
@@ -275,6 +344,8 @@ export default {
             ...dados,
             golsky: {
               ...dados.golsky,
+              data: dataSolicitada,
+              periodo: periodo,
               desatualizado: true,
               aviso: "Exibindo ultima consulta disponivel"
             }
@@ -288,6 +359,7 @@ export default {
 
         return Response.json({
           erro: "Atualizacao temporariamente indisponivel",
+          data: dataSolicitada,
           response: []
         }, {
           status: 503,
@@ -316,8 +388,15 @@ export default {
           "https://v3.football.api-sports.io/fixtures"
         );
 
-        apiUrl.searchParams.set("date", hoje);
-        apiUrl.searchParams.set("timezone", TIMEZONE);
+        apiUrl.searchParams.set(
+          "date",
+          dataSolicitada
+        );
+
+        apiUrl.searchParams.set(
+          "timezone",
+          TIMEZONE
+        );
 
         const resposta = await fetch(apiUrl.toString(), {
           headers: {
@@ -346,14 +425,16 @@ export default {
         dados.golsky = {
           atualizadoEm: new Date().toISOString(),
           desatualizado: false,
-          data: hoje,
+          data: dataSolicitada,
+          periodo: periodo,
+          cacheSegundos: tempoCache,
           timezone: TIMEZONE
         };
 
         const resultado = Response.json(dados, {
           headers: {
             "Cache-Control":
-              "public, max-age=" + CACHE_SECONDS,
+              "public, max-age=" + tempoCache,
             "X-GOLSKY-Cache": "FRESH"
           }
         });
