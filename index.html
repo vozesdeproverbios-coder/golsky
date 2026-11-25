@@ -1327,5 +1327,510 @@ applyFilters();
 })();
 </script>
 
+<style>
+.goal-controls{
+display:flex;
+flex-wrap:wrap;
+gap:8px;
+margin:14px 0;
+}
+
+.goal-control{
+background:#1c304c;
+color:#fff;
+border:1px solid #344e70;
+padding:10px 14px;
+}
+
+.goal-control.enabled{
+background:#39e58c;
+color:#081b12;
+}
+
+#goal-alerts{
+position:fixed;
+top:15px;
+right:15px;
+width:min(360px,90vw);
+z-index:9999;
+pointer-events:none;
+}
+
+.goal-notice{
+background:#087c42;
+color:white;
+border:2px solid #39e58c;
+border-radius:14px;
+padding:20px;
+margin-bottom:10px;
+box-shadow:0 8px 30px #0008;
+animation:goalEntrance .4s ease;
+}
+
+.goal-notice strong{
+display:block;
+font-size:25px;
+margin-bottom:8px;
+}
+
+.goal-notice small{
+display:block;
+margin-top:8px;
+color:#d6ffe7;
+}
+
+.goal-highlight{
+animation:goalFlash 1s infinite alternate;
+}
+
+@keyframes goalEntrance{
+from{
+opacity:0;
+transform:translateY(-20px);
+}
+to{
+opacity:1;
+transform:translateY(0);
+}
+}
+
+@keyframes goalFlash{
+from{
+background:#15243b;
+}
+to{
+background:#087c42;
+}
+}
+</style>
+
+<script>
+(function(){
+
+const scores=new Map();
+const highlights=new Map();
+
+let initialized=false;
+let lastResponse=null;
+let audio=null;
+let sound=false;
+let onlyFavorites=true;
+
+try{
+onlyFavorites=
+localStorage.getItem(
+"golsky_goal_favorites"
+)!=="false";
+}catch(e){}
+
+const controls=element(
+"div","goal-controls"
+);
+
+const soundButton=element(
+"button","goal-control"
+);
+
+const modeButton=element(
+"button","goal-control"
+);
+
+soundButton.type="button";
+modeButton.type="button";
+
+controls.append(
+soundButton,
+modeButton
+);
+
+document.querySelector(".filters")
+.before(controls);
+
+const alerts=element("div","");
+alerts.id="goal-alerts";
+
+alerts.setAttribute(
+"aria-live","polite"
+);
+
+document.body.appendChild(alerts);
+
+function updateButtons(){
+
+soundButton.textContent=sound
+?"🔊 Som ativado"
+:"🔇 Ativar som de gol";
+
+soundButton.classList.toggle(
+"enabled",sound
+);
+
+modeButton.textContent=onlyFavorites
+?"⭐ Gols dos favoritos"
+:"🌍 Gols de todos os times";
+
+}
+
+function playGoal(){
+
+if(!sound||!audio)return;
+
+try{
+
+const now=audio.currentTime;
+
+[523,659,784,1047].forEach(
+(frequency,index)=>{
+
+const oscillator=
+audio.createOscillator();
+
+const gain=audio.createGain();
+
+oscillator.type="sine";
+oscillator.frequency.value=frequency;
+
+const start=now+index*.15;
+
+gain.gain.setValueAtTime(
+.12,start
+);
+
+gain.gain.exponentialRampToValueAtTime(
+.001,start+.4
+);
+
+oscillator.connect(gain);
+gain.connect(audio.destination);
+
+oscillator.start(start);
+oscillator.stop(start+.4);
+
+});
+
+}catch(e){}
+
+}
+
+soundButton.onclick=async()=>{
+
+if(sound){
+
+sound=false;
+
+}else{
+
+try{
+
+const AudioContext=
+window.AudioContext||
+window.webkitAudioContext;
+
+if(!AudioContext)return;
+
+if(!audio){
+audio=new AudioContext();
+}
+
+await audio.resume();
+
+sound=true;
+
+playGoal();
+
+}catch(e){
+
+sound=false;
+
+}
+
+}
+
+updateButtons();
+
+};
+
+modeButton.onclick=()=>{
+
+onlyFavorites=!onlyFavorites;
+
+try{
+
+localStorage.setItem(
+"golsky_goal_favorites",
+String(onlyFavorites)
+);
+
+}catch(e){}
+
+updateButtons();
+
+};
+
+function getFavorites(){
+
+try{
+
+return new Set(
+JSON.parse(
+localStorage.getItem(
+"golsky_favoritos"
+)||"[]"
+).map(String)
+);
+
+}catch(e){
+
+return new Set();
+
+}
+
+}
+
+function notifyGoal(g,teamName){
+
+const notice=element(
+"div","goal-notice"
+);
+
+notice.append(
+element(
+"strong","","⚽ GOOOOOL!"
+),
+
+element(
+"div","",teamName
+),
+
+element(
+"div","",
+g.teams.home.name+
+" "+g.goals.home+
+" × "+g.goals.away+
+" "+g.teams.away.name
+),
+
+element(
+"small","",
+"Gol detectado na atualização do placar"
+)
+
+);
+
+alerts.prepend(notice);
+
+while(alerts.children.length>4){
+alerts.lastElementChild.remove();
+}
+
+setTimeout(
+()=>notice.remove(),
+10000
+);
+
+playGoal();
+
+}
+
+function detectGoals(){
+
+if(!hasData)return;
+
+if(lastResponse===allGames)return;
+
+lastResponse=allGames;
+
+const favorites=getFavorites();
+
+for(const g of allGames){
+
+const id=String(g.fixture.id);
+
+const home=g.goals.home;
+const away=g.goals.away;
+
+if(home==null||away==null){
+continue;
+}
+
+const previous=scores.get(id);
+
+scores.set(id,{home,away});
+
+if(!initialized||!previous){
+continue;
+}
+
+const code=g.fixture.status.short;
+
+if(
+!liveCodes.includes(code)&&
+!finishedCodes.includes(code)
+){
+continue;
+}
+
+const homeGoal=home>previous.home;
+const awayGoal=away>previous.away;
+
+if(!homeGoal&&!awayGoal){
+continue;
+}
+
+const favoriteMatch=
+favorites.has(
+String(g.teams.home.id)
+)||
+favorites.has(
+String(g.teams.away.id)
+);
+
+if(onlyFavorites&&!favoriteMatch){
+continue;
+}
+
+highlights.set(
+id,Date.now()+15000
+);
+
+if(homeGoal){
+notifyGoal(g,g.teams.home.name);
+}
+
+if(awayGoal){
+notifyGoal(g,g.teams.away.name);
+}
+
+}
+
+initialized=true;
+
+}
+
+function highlightGoals(){
+
+const term=normalize(
+search.value.trim()
+);
+
+const favorites=getFavorites();
+
+const matches=allGames.filter(g=>{
+
+const code=g.fixture.status.short;
+
+if(
+currentFilter==="live"&&
+!liveCodes.includes(code)
+)return false;
+
+if(
+currentFilter==="scheduled"&&
+!scheduledCodes.includes(code)
+)return false;
+
+if(
+currentFilter==="finished"&&
+!finishedCodes.includes(code)
+)return false;
+
+if(
+currentFilter==="favorites"&&
+!favorites.has(
+String(g.teams.home.id)
+)&&
+!favorites.has(
+String(g.teams.away.id)
+)
+)return false;
+
+const content=normalize([
+g.teams.home.name,
+g.teams.away.name,
+g.league.name,
+g.league.country,
+leagueInfo(g.league)[0]
+].join(" "));
+
+return content.includes(term);
+
+});
+
+document.querySelectorAll(
+".championship"
+).forEach(section=>{
+
+const group=matches.filter(g=>
+String(g.league.id)===
+section.dataset.league
+);
+
+group.sort((a,b)=>
+new Date(a.fixture.date)-
+new Date(b.fixture.date)
+);
+
+section.querySelectorAll(
+".game"
+).forEach((card,index)=>{
+
+const g=group[index];
+
+if(!g)return;
+
+const id=String(g.fixture.id);
+
+const expires=highlights.get(id);
+
+if(!expires)return;
+
+const remaining=expires-Date.now();
+
+if(remaining<=0){
+
+highlights.delete(id);
+return;
+
+}
+
+card.classList.add(
+"goal-highlight"
+);
+
+setTimeout(()=>{
+
+card.classList.remove(
+"goal-highlight"
+);
+
+},remaining);
+
+});
+
+});
+
+}
+
+const previousRender=renderGames;
+
+renderGames=function(list){
+
+detectGoals();
+
+previousRender(list);
+
+highlightGoals();
+
+};
+
+updateButtons();
+
+if(hasData){
+applyFilters();
+}
+
+})();
+</script>
+
 </body>
 </html>
