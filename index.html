@@ -1832,5 +1832,396 @@ applyFilters();
 })();
 </script>
 
+<style>
+#gol-flash{
+position:fixed;
+inset:0;
+z-index:99999;
+display:none;
+align-items:center;
+justify-content:center;
+background:rgba(0,0,0,.78);
+padding:18px;
+}
+
+#gol-flash.active{
+display:flex;
+}
+
+.gol-flash-card{
+position:relative;
+width:min(560px,100%);
+background:linear-gradient(
+135deg,#063c24,#087c42,#12965a
+);
+border:3px solid #39e58c;
+border-radius:24px;
+padding:35px 20px;
+text-align:center;
+color:white;
+box-shadow:0 0 50px #39e58c66;
+animation:golFlashEntrada .5s ease;
+}
+
+@keyframes golFlashEntrada{
+from{
+opacity:0;
+transform:scale(.75);
+}
+to{
+opacity:1;
+transform:scale(1);
+}
+}
+
+.gol-flash-title{
+font-size:clamp(30px,7vw,55px);
+font-weight:900;
+color:#fff;
+margin:15px 0;
+}
+
+#gol-flash-logo{
+width:100px;
+height:100px;
+object-fit:contain;
+margin:12px auto;
+}
+
+#gol-flash-team{
+font-size:clamp(24px,5vw,36px);
+font-weight:bold;
+text-transform:uppercase;
+margin:12px 0;
+}
+
+#gol-flash-score{
+font-size:clamp(20px,4vw,28px);
+font-weight:bold;
+margin:20px 0;
+}
+
+#gol-flash-league{
+font-size:16px;
+color:#d6ffe7;
+margin:10px 0;
+}
+
+#gol-flash-close{
+position:absolute;
+right:10px;
+top:10px;
+padding:8px 12px;
+background:#ffffff25;
+color:white;
+}
+
+.gol-flash-progress{
+height:5px;
+background:#ffffff30;
+border-radius:5px;
+overflow:hidden;
+margin-top:25px;
+}
+
+#gol-flash-bar{
+height:100%;
+width:100%;
+background:#39e58c;
+}
+
+@keyframes golFlashTempo{
+from{width:100%}
+to{width:0}
+}
+
+#gol-flash-test{
+background:#1c304c;
+color:#39e58c;
+border:1px solid #344e70;
+padding:10px 14px;
+}
+
+@media(prefers-reduced-motion:reduce){
+.gol-flash-card{
+animation:none;
+}
+}
+</style>
+
+<div id="gol-flash"
+role="dialog"
+aria-label="Alerta de gol">
+
+<div class="gol-flash-card">
+
+<button id="gol-flash-close"
+type="button"
+aria-label="Fechar alerta">✕</button>
+
+<div id="gol-flash-label">
+🔴 ALERTA DE GOL
+</div>
+
+<div class="gol-flash-title">
+⚽ GOOOOOL!
+</div>
+
+<img id="gol-flash-logo" alt="">
+
+<div id="gol-flash-team"></div>
+
+<div id="gol-flash-score"></div>
+
+<div id="gol-flash-league"></div>
+
+<div class="gol-flash-progress">
+<div id="gol-flash-bar"></div>
+</div>
+
+</div>
+</div>
+
+<script>
+(function(){
+
+const flash=
+document.getElementById("gol-flash");
+
+const logo=
+document.getElementById("gol-flash-logo");
+
+const teamBox=
+document.getElementById("gol-flash-team");
+
+const scoreBox=
+document.getElementById("gol-flash-score");
+
+const leagueBox=
+document.getElementById("gol-flash-league");
+
+const labelBox=
+document.getElementById("gol-flash-label");
+
+const bar=
+document.getElementById("gol-flash-bar");
+
+const queue=[];
+
+let showing=false;
+let timer=null;
+
+function nextFlash(){
+
+if(showing||!queue.length)return;
+
+const item=queue.shift();
+
+showing=true;
+
+labelBox.textContent=item.test
+?"🧪 SIMULAÇÃO DE GOL"
+:"🔴 ALERTA DE GOL";
+
+teamBox.textContent=item.team;
+
+scoreBox.textContent=item.score;
+
+leagueBox.textContent=item.league||"";
+
+logo.hidden=!item.id;
+
+logo.onerror=()=>{
+logo.hidden=true;
+};
+
+if(item.id){
+
+logo.src=
+"/escudos/"+item.id+".png";
+
+}else{
+
+logo.removeAttribute("src");
+
+}
+
+flash.classList.add("active");
+
+bar.style.animation="none";
+
+void bar.offsetWidth;
+
+bar.style.animation=
+"golFlashTempo 5s linear forwards";
+
+timer=setTimeout(closeFlash,5000);
+
+}
+
+function closeFlash(){
+
+clearTimeout(timer);
+
+flash.classList.remove("active");
+
+showing=false;
+
+nextFlash();
+
+}
+
+function addFlash(item){
+
+queue.push(item);
+
+nextFlash();
+
+}
+
+document.getElementById(
+"gol-flash-close"
+).onclick=closeFlash;
+
+document.addEventListener(
+"keydown",e=>{
+
+if(e.key==="Escape"&&showing){
+
+closeFlash();
+
+}
+
+});
+
+function readNotice(notice){
+
+const parts=notice.children;
+
+if(parts.length<3)return;
+
+const teamName=parts[1].textContent;
+
+const score=parts[2].textContent;
+
+let found=null;
+let teamId=null;
+
+for(const g of allGames){
+
+const expected=
+g.teams.home.name+
+" "+g.goals.home+
+" × "+g.goals.away+
+" "+g.teams.away.name;
+
+if(expected!==score)continue;
+
+if(g.teams.home.name===teamName){
+
+found=g;
+teamId=g.teams.home.id;
+break;
+
+}
+
+if(g.teams.away.name===teamName){
+
+found=g;
+teamId=g.teams.away.id;
+break;
+
+}
+
+}
+
+addFlash({
+
+team:teamName,
+
+score:score,
+
+id:teamId,
+
+league:found
+?leagueInfo(found.league)[0]
+:""
+
+});
+
+}
+
+const alerts=
+document.getElementById("goal-alerts");
+
+if(alerts){
+
+const observer=new MutationObserver(
+records=>{
+
+for(const record of records){
+
+for(const node of record.addedNodes){
+
+if(
+node.nodeType===1&&
+node.classList.contains("goal-notice")
+){
+
+readNotice(node);
+
+}
+
+}
+
+}
+
+});
+
+observer.observe(alerts,{
+childList:true
+});
+
+}
+
+const controls=
+document.querySelector(".goal-controls");
+
+if(controls){
+
+const testButton=element(
+"button",
+"",
+"⚽ Testar GOL FLASH"
+);
+
+testButton.id="gol-flash-test";
+testButton.type="button";
+
+testButton.onclick=()=>{
+
+addFlash({
+
+team:"FLAMENGO",
+
+score:"Flamengo 2 × 1 Palmeiras",
+
+id:127,
+
+league:"Brasileirão Série A",
+
+test:true
+
+});
+
+};
+
+controls.appendChild(testButton);
+
+}
+
+})();
+</script>
+
 </body>
 </html>
