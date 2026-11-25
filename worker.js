@@ -2,8 +2,7 @@
 const CACHE_SECONDS = 300;
 const BACKUP_SECONDS = 86400;
 const RETRY_SECONDS = 120;
-
-let consultaEmAndamento = null;
+const TIMEZONE = "America/Sao_Paulo";
 
 export default {
   async fetch(request, env) {
@@ -30,7 +29,6 @@ export default {
             "Cache-Control": "public, max-age=86400"
           }
         });
-
       } catch {
         return new Response("Falha ao carregar escudo", {
           status: 502
@@ -44,34 +42,47 @@ export default {
         sistema: "GOLSKY",
         status: "online",
         apiConfigurada: Boolean(env.API_FOOTBALL_KEY),
-        cacheSegundos: CACHE_SECONDS
+        cacheSegundos: CACHE_SECONDS,
+        timezone: TIMEZONE,
+        modo: "jogos-do-dia"
       });
     }
 
-    // JOGOS AO VIVO
+    // CONSULTA DOS JOGOS
     if (url.pathname === "/api/jogos") {
-
       if (!env.API_FOOTBALL_KEY) {
         return Response.json({
           erro: "API nao configurada"
         }, { status: 503 });
       }
 
+      const partes = new Intl.DateTimeFormat("en-CA", {
+        timeZone: TIMEZONE,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }).formatToParts(new Date());
+
+      const obter = tipo =>
+        partes.find(p => p.type === tipo).value;
+
+      const hoje =
+        obter("year") + "-" +
+        obter("month") + "-" +
+        obter("day");
+
       const cache = caches.default;
 
       const cacheKey = new Request(
-        url.origin + "/api/jogos",
-        { method: "GET" }
+        url.origin + "/api/cache-jogos/" + hoje
       );
 
       const backupKey = new Request(
-        url.origin + "/api/cache-backup",
-        { method: "GET" }
+        url.origin + "/api/cache-backup/" + hoje
       );
 
       const retryKey = new Request(
-        url.origin + "/api/cache-retry",
-        { method: "GET" }
+        url.origin + "/api/cache-retry/" + hoje
       );
 
       async function usarBackup() {
@@ -120,85 +131,74 @@ export default {
           return await usarBackup();
         }
 
-        if (!consultaEmAndamento) {
+        const apiUrl = new URL(
+          "https://v3.football.api-sports.io/fixtures"
+        );
 
-          consultaEmAndamento = (async () => {
+        apiUrl.searchParams.set("date", hoje);
+        apiUrl.searchParams.set("timezone", TIMEZONE);
 
-            try {
-              const resposta = await fetch(
-                "https://v3.football.api-sports.io/fixtures?live=all",
-                {
-                  headers: {
-                    "x-apisports-key":
-                      env.API_FOOTBALL_KEY.trim()
-                  }
-                }
-              );
+        const resposta = await fetch(apiUrl.toString(), {
+          headers: {
+            "x-apisports-key":
+              env.API_FOOTBALL_KEY.trim()
+          }
+        });
 
-              const dados = await resposta.json();
+        const dados = await resposta.json();
 
-              if (
-                !resposta.ok ||
-                Object.keys(dados.errors || {}).length > 0 ||
-                !Array.isArray(dados.response)
-              ) {
-                throw new Error("Falha na API");
-              }
-
-              dados.golsky = {
-                atualizadoEm: new Date().toISOString(),
-                desatualizado: false
-              };
-
-              const resultado = Response.json(dados, {
-                headers: {
-                  "Cache-Control":
-                    "public, max-age=" + CACHE_SECONDS,
-                  "X-GOLSKY-Cache": "FRESH"
-                }
-              });
-
-              const backup = Response.json(dados, {
-                headers: {
-                  "Cache-Control":
-                    "public, max-age=" + BACKUP_SECONDS
-                }
-              });
-
-              await Promise.allSettled([
-                cache.put(cacheKey, resultado.clone()),
-                cache.put(backupKey, backup)
-              ]);
-
-              return resultado;
-
-            } catch (erro) {
-
-              console.error("GOLSKY:", erro.message);
-
-              try {
-                await cache.put(
-                  retryKey,
-                  new Response("aguarde", {
-                    headers: {
-                      "Cache-Control":
-                        "public, max-age=" + RETRY_SECONDS
-                    }
-                  })
-                );
-              } catch {}
-
-              return await usarBackup();
-            }
-
-          })().finally(() => {
-            consultaEmAndamento = null;
-          });
+        if (
+          !resposta.ok ||
+          Object.keys(dados.errors || {}).length > 0 ||
+          !Array.isArray(dados.response)
+        ) {
+          throw new Error("Falha na API");
         }
 
-        return (await consultaEmAndamento).clone();
+        dados.golsky = {
+          atualizadoEm: new Date().toISOString(),
+          desatualizado: false,
+          data: hoje,
+          timezone: TIMEZONE
+        };
 
-      } catch {
+        const resultado = Response.json(dados, {
+          headers: {
+            "Cache-Control":
+              "public, max-age=" + CACHE_SECONDS,
+            "X-GOLSKY-Cache": "FRESH"
+          }
+        });
+
+        const backup = Response.json(dados, {
+          headers: {
+            "Cache-Control":
+              "public, max-age=" + BACKUP_SECONDS
+          }
+        });
+
+        await Promise.allSettled([
+          cache.put(cacheKey, resultado.clone()),
+          cache.put(backupKey, backup)
+        ]);
+
+        return resultado;
+
+      } catch (erro) {
+        console.error("GOLSKY:", erro.message);
+
+        try {
+          await cache.put(
+            retryKey,
+            new Response("aguarde", {
+              headers: {
+                "Cache-Control":
+                  "public, max-age=" + RETRY_SECONDS
+              }
+            })
+          );
+        } catch {}
+
         return await usarBackup();
       }
     }
