@@ -152,7 +152,7 @@ export default {
           Object.keys(dados.errors || {}).length > 0 ||
           !Array.isArray(dados.response)
         ) {
-          throw new Error("Falha na API");
+          return Response.json({erro:"Falha na API",statusAPI:resposta.status,detalhes:dados.errors,parametros:dados.parameters},{status:502,headers:{"Cache-Control":"no-store"}});
         }
 
         dados.golsky = {
