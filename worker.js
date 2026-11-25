@@ -2,6 +2,7 @@
 const CACHE_SECONDS = 300;
 const BACKUP_SECONDS = 86400;
 const RETRY_SECONDS = 120;
+const EVENTS_CACHE_SECONDS = 300;
 const TIMEZONE = "America/Sao_Paulo";
 
 export default {
@@ -43,13 +44,168 @@ export default {
         status: "online",
         apiConfigurada: Boolean(env.API_FOOTBALL_KEY),
         cacheSegundos: CACHE_SECONDS,
+        cacheEventos: EVENTS_CACHE_SECONDS,
         timezone: TIMEZONE,
-        modo: "jogos-do-dia"
+        modo: "jogos-do-dia",
+        eventos: true,
+        versao: "6.0"
       });
+    }
+
+    // CONSULTA DE LANCES E EVENTOS
+    if (url.pathname === "/api/eventos") {
+
+      if (!env.API_FOOTBALL_KEY) {
+        return Response.json({
+          erro: "API nao configurada"
+        }, { status: 503 });
+      }
+
+      const id = url.searchParams.get("id");
+
+      if (!id || !/^[1-9]\d{0,11}$/.test(id)) {
+        return Response.json({
+          erro: "ID da partida invalido"
+        }, { status: 400 });
+      }
+
+      const cache = caches.default;
+
+      const eventKey = new Request(
+        url.origin + "/api/cache-eventos/" + id
+      );
+
+      const eventBackupKey = new Request(
+        url.origin + "/api/backup-eventos/" + id
+      );
+
+      const eventRetryKey = new Request(
+        url.origin + "/api/retry-eventos/" + id
+      );
+
+      async function backupEventos() {
+        const backup = await cache.match(eventBackupKey);
+
+        if (backup) {
+          const dados = await backup.json();
+
+          return Response.json({
+            ...dados,
+            golsky: {
+              ...dados.golsky,
+              desatualizado: true
+            }
+          }, {
+            headers: {
+              "Cache-Control": "no-store"
+            }
+          });
+        }
+
+        return Response.json({
+          erro: "Eventos temporariamente indisponiveis",
+          response: []
+        }, {
+          status: 503,
+          headers: {
+            "Cache-Control": "no-store",
+            "Retry-After": String(RETRY_SECONDS)
+          }
+        });
+      }
+
+      try {
+
+        const cached = await cache.match(eventKey);
+
+        if (cached) {
+          return cached;
+        }
+
+        if (await cache.match(eventRetryKey)) {
+          return await backupEventos();
+        }
+
+        const apiUrl = new URL(
+          "https://v3.football.api-sports.io/fixtures/events"
+        );
+
+        apiUrl.searchParams.set("fixture", id);
+
+        const resposta = await fetch(apiUrl.toString(), {
+          headers: {
+            "x-apisports-key":
+              env.API_FOOTBALL_KEY.trim()
+          }
+        });
+
+        const dados = await resposta.json();
+
+        if (
+          !resposta.ok ||
+          Object.keys(dados.errors || {}).length > 0 ||
+          !Array.isArray(dados.response)
+        ) {
+          console.error(
+            "GOLSKY EVENTOS:",
+            resposta.status,
+            JSON.stringify(dados.errors || {})
+          );
+
+          throw new Error("Falha na API de eventos");
+        }
+
+        dados.golsky = {
+          partida: id,
+          atualizadoEm: new Date().toISOString(),
+          desatualizado: false
+        };
+
+        const resultado = Response.json(dados, {
+          headers: {
+            "Cache-Control":
+              "public, max-age=" + EVENTS_CACHE_SECONDS,
+            "X-GOLSKY-Cache": "FRESH"
+          }
+        });
+
+        const backup = Response.json(dados, {
+          headers: {
+            "Cache-Control":
+              "public, max-age=" + BACKUP_SECONDS
+          }
+        });
+
+        await Promise.allSettled([
+          cache.put(eventKey, resultado.clone()),
+          cache.put(eventBackupKey, backup)
+        ]);
+
+        return resultado;
+
+      } catch (erro) {
+
+        console.error("GOLSKY EVENTOS:", erro.message);
+
+        try {
+          await cache.put(
+            eventRetryKey,
+            new Response("aguarde", {
+              headers: {
+                "Cache-Control":
+                  "public, max-age=" + RETRY_SECONDS
+              }
+            })
+          );
+        } catch {}
+
+        return await backupEventos();
+      }
     }
 
     // CONSULTA DOS JOGOS
     if (url.pathname === "/api/jogos") {
+
       if (!env.API_FOOTBALL_KEY) {
         return Response.json({
           erro: "API nao configurada"
@@ -86,6 +242,7 @@ export default {
       );
 
       async function usarBackup() {
+
         const backup = await cache.match(backupKey);
 
         if (backup) {
@@ -119,6 +276,7 @@ export default {
       }
 
       try {
+
         const cached = await cache.match(cacheKey);
 
         if (cached) {
@@ -152,7 +310,14 @@ export default {
           Object.keys(dados.errors || {}).length > 0 ||
           !Array.isArray(dados.response)
         ) {
-          return Response.json({erro:"Falha na API",statusAPI:resposta.status,detalhes:dados.errors,parametros:dados.parameters},{status:502,headers:{"Cache-Control":"no-store"}});
+
+          console.error(
+            "GOLSKY API:",
+            resposta.status,
+            JSON.stringify(dados.errors || {})
+          );
+
+          throw new Error("Falha na API");
         }
 
         dados.golsky = {
@@ -185,6 +350,7 @@ export default {
         return resultado;
 
       } catch (erro) {
+
         console.error("GOLSKY:", erro.message);
 
         try {
