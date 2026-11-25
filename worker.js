@@ -152,7 +152,18 @@ export default {
             JSON.stringify(dados.errors || {})
           );
 
-          throw new Error("Falha na API de eventos");
+          threturn Response.json({
+  erro: "Falha na API de eventos",
+  statusAPI: resposta.status,
+  detalhes: dados.errors,
+  parametros: dados.parameters,
+  resultados: dados.results
+}, {
+  status: 502,
+  headers: {
+    "Cache-Control": "no-store"
+  }
+});row new Error("Falha na API de eventos");
         }
 
         dados.golsky = {
