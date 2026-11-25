@@ -923,5 +923,409 @@ if(hasData){
 })();
 </script>
 
+<style>
+.event-button{
+display:block;
+margin:14px auto 0;
+padding:10px 16px;
+background:#1c304c;
+color:#39e58c;
+border:1px solid #344e70
+}
+
+#event-dialog{
+width:min(620px,94vw);
+max-height:85vh;
+overflow:auto;
+background:#15243b;
+color:#fff;
+border:1px solid #344e70;
+border-radius:14px;
+padding:20px
+}
+
+#event-dialog::backdrop{
+background:#000a
+}
+
+.event-line{
+display:grid;
+grid-template-columns:55px 30px 1fr;
+gap:8px;
+padding:12px 0;
+border-bottom:1px solid #344e70;
+align-items:start
+}
+
+.event-line small{
+display:block;
+color:#aabbd0;
+margin-top:4px
+}
+
+.event-top{
+display:flex;
+justify-content:space-between;
+align-items:center;
+gap:12px
+}
+</style>
+
+<dialog id="event-dialog">
+
+<div class="event-top">
+<h2>Lances da partida</h2>
+<button id="event-close">Fechar</button>
+</div>
+
+<p id="event-match"></p>
+
+<div id="event-list" aria-live="polite"></div>
+
+<button id="event-refresh" class="event-button">
+Atualizar lances
+</button>
+
+</dialog>
+
+<script>
+(function(){
+
+const dialog=document.getElementById("event-dialog");
+const listBox=document.getElementById("event-list");
+const refresh=document.getElementById("event-refresh");
+
+const memory=new Map();
+const pending=new Map();
+
+let selected=null;
+let sequence=0;
+
+function describe(e){
+
+const detail=e.detail||"";
+
+const names={
+"Normal Goal":"Gol",
+"Own Goal":"Gol contra",
+"Penalty":"Gol de pênalti",
+"Missed Penalty":"Pênalti perdido",
+"Yellow Card":"Cartão amarelo",
+"Red Card":"Cartão vermelho",
+"Second Yellow card":"Segundo cartão amarelo",
+"Goal cancelled":"Gol anulado",
+"Penalty confirmed":"Pênalti confirmado"
+};
+
+if(e.type==="Goal"){
+return ["⚽",names[detail]||"Gol"];
+}
+
+if(e.type==="Card"){
+return [
+/red/i.test(detail)?"🟥":"🟨",
+names[detail]||"Cartão"
+];
+}
+
+if(e.type==="subst"){
+return ["🔄","Substituição"];
+}
+
+if(e.type==="Var"){
+return ["📺",names[detail]||"Revisão do VAR"];
+}
+
+return ["•","Outro acontecimento"];
+
+}
+
+async function getEvents(id){
+
+const old=memory.get(id);
+
+if(old&&Date.now()-old.time<old.ttl){
+return old.data;
+}
+
+if(pending.has(id)){
+return pending.get(id);
+}
+
+const task=(async()=>{
+
+try{
+
+const res=await fetch(
+"/api/eventos?id="+encodeURIComponent(id),
+{cache:"no-store"}
+);
+
+const data=await res.json();
+
+if(
+!res.ok||
+Object.keys(data.errors||{}).length||
+!Array.isArray(data.response)
+){
+throw new Error("Eventos indisponíveis");
+}
+
+memory.set(id,{
+time:Date.now(),
+ttl:300000,
+data
+});
+
+return data;
+
+}catch(error){
+
+const data=old?.data?.response
+?{
+...old.data,
+golsky:{
+...old.data.golsky,
+desatualizado:true
+}
+}
+:{erro:true};
+
+memory.set(id,{
+time:Date.now(),
+ttl:120000,
+data
+});
+
+return data;
+
+}
+
+})();
+
+pending.set(id,task);
+
+try{
+return await task;
+}finally{
+pending.delete(id);
+}
+
+}
+
+async function showEvents(){
+
+if(!selected)return;
+
+const id=String(selected.fixture.id);
+const token=++sequence;
+
+refresh.disabled=true;
+
+listBox.textContent="Consultando lances...";
+
+const data=await getEvents(id);
+
+if(token!==sequence||!dialog.open)return;
+
+refresh.disabled=false;
+
+listBox.replaceChildren();
+
+if(data.erro){
+
+listBox.textContent=
+"Lances temporariamente indisponíveis. Tente novamente em dois minutos.";
+
+return;
+
+}
+
+if(data.golsky?.desatualizado){
+
+listBox.append(
+element(
+"p",
+"warning",
+"Exibindo os últimos lances disponíveis."
+)
+);
+
+}
+
+if(!data.response.length){
+
+listBox.append(
+element(
+"p",
+"",
+"Nenhum lance informado pela API até o momento."
+)
+);
+
+return;
+
+}
+
+const events=[...data.response].sort(
+(a,b)=>
+(b.time?.elapsed??0)-(a.time?.elapsed??0)||
+(b.time?.extra??0)-(a.time?.extra??0)
+);
+
+for(const e of events){
+
+const [icon,label]=describe(e);
+
+const minute=e.time?.elapsed==null
+?"—"
+:e.time.elapsed+
+(e.time.extra?"+"+e.time.extra:"")+"'";
+
+const row=element("div","event-line");
+const text=element("div","");
+
+text.append(
+element(
+"strong",
+"",
+label+(e.player?.name?" — "+e.player.name:"")
+)
+);
+
+text.append(
+element("small","",e.team?.name||"")
+);
+
+if(e.assist?.name){
+
+text.append(
+element(
+"small",
+"",
+(e.type==="subst"
+?"Outro jogador: "
+:"Assistência: ")+e.assist.name
+)
+);
+
+}
+
+row.append(
+element("span","",minute),
+element("span","",icon),
+text
+);
+
+listBox.append(row);
+
+}
+
+}
+
+function openEvents(g){
+
+selected=g;
+
+document.getElementById("event-match")
+.textContent=
+g.teams.home.name+" × "+g.teams.away.name;
+
+if(!dialog.open){
+dialog.showModal();
+}
+
+showEvents();
+
+}
+
+document.getElementById("event-close")
+.onclick=()=>dialog.close();
+
+dialog.addEventListener("close",()=>{
+
+sequence++;
+selected=null;
+
+});
+
+refresh.onclick=showEvents;
+
+const previousRender=renderGames;
+
+renderGames=function(list){
+
+previousRender(list);
+
+document.querySelectorAll(".championship")
+.forEach(section=>{
+
+const leagueId=section.dataset.league;
+
+let matches=list.filter(g=>
+String(g.league.id)===leagueId
+);
+
+if(currentFilter==="favorites"){
+
+let favorites=[];
+
+try{
+favorites=JSON.parse(
+localStorage.getItem("golsky_favoritos")||"[]"
+).map(String);
+}catch(e){}
+
+matches=matches.filter(g=>
+favorites.includes(String(g.teams.home.id))||
+favorites.includes(String(g.teams.away.id))
+);
+
+}
+
+matches.sort((a,b)=>
+new Date(a.fixture.date)-
+new Date(b.fixture.date)
+);
+
+const cards=section.querySelectorAll(".game");
+
+cards.forEach((card,index)=>{
+
+const g=matches[index];
+
+if(!g)return;
+
+if(card.querySelector(".event-button"))return;
+
+if(scheduledCodes.includes(
+g.fixture.status.short
+))return;
+
+const btn=element(
+"button",
+"event-button",
+"📋 Ver lances"
+);
+
+btn.type="button";
+
+btn.onclick=()=>openEvents(g);
+
+card.appendChild(btn);
+
+});
+
+});
+
+};
+
+if(hasData){
+applyFilters();
+}
+
+})();
+</script>
+
 </body>
 </html>
