@@ -1,4 +1,3 @@
-
 const CACHE_SECONDS = 300;
 const BACKUP_SECONDS = 86400;
 const RETRY_SECONDS = 120;
@@ -48,7 +47,7 @@ export default {
         timezone: TIMEZONE,
         modo: "jogos-do-dia",
         eventos: true,
-        versao: "6.0"
+        versao: "6.1"
       });
     }
 
@@ -146,24 +145,37 @@ export default {
           Object.keys(dados.errors || {}).length > 0 ||
           !Array.isArray(dados.response)
         ) {
+
           console.error(
             "GOLSKY EVENTOS:",
             resposta.status,
             JSON.stringify(dados.errors || {})
           );
 
-          threturn Response.json({
-  erro: "Falha na API de eventos",
-  statusAPI: resposta.status,
-  detalhes: dados.errors,
-  parametros: dados.parameters,
-  resultados: dados.results
-}, {
-  status: 502,
-  headers: {
-    "Cache-Control": "no-store"
-  }
-});row new Error("Falha na API de eventos");
+          const diagnostico = Response.json({
+            erro: "Falha na API de eventos",
+            statusAPI: resposta.status,
+            detalhes: dados.errors,
+            parametros: dados.parameters,
+            resultados: dados.results
+          }, {
+            status: 502,
+            headers: {
+              "Cache-Control": "no-store"
+            }
+          });
+
+          await cache.put(
+            eventRetryKey,
+            new Response("aguarde", {
+              headers: {
+                "Cache-Control":
+                  "public, max-age=" + RETRY_SECONDS
+              }
+            })
+          ).catch(() => {});
+
+          return diagnostico;
         }
 
         dados.golsky = {
