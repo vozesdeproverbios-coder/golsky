@@ -51,7 +51,7 @@ export default {
       const cache = caches.default;
 
       const videoKey = new Request(
-        url.origin + "/api/cache-youtube-v1"
+        url.origin + "/api/cache-youtube-v2"
       );
 
       try {
@@ -68,7 +68,7 @@ export default {
 
         apiUrl.searchParams.set("part", "snippet");
         apiUrl.searchParams.set("type", "video");
-        apiUrl.searchParams.set("q", "football highlights gols");
+        apiUrl.searchParams.set("channelId", "UC14UlmYlSNiQCBe9Eookf_A"); apiUrl.searchParams.set("q", "highlights|goals|gols|resumen");
         apiUrl.searchParams.set("order", "date");
         apiUrl.searchParams.set("maxResults", "25");
         apiUrl.searchParams.set("videoEmbeddable", "true");
