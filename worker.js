@@ -39,100 +39,224 @@ export default {
         });
       }
     }
-    // GOLSKY TV - YOUTUBE
-    if (url.pathname === "/api/videos") {
+   // GOLSKY TV - MULTICLUBES
+if (url.pathname === "/api/videos") {
 
-      if (!env.YOUTUBE_API_KEY) {
-        return Response.json({
-          erro: "YouTube API nao configurada"
-        }, { status: 503 });
-      }
+  if (!env.YOUTUBE_API_KEY) {
+    return Response.json({
+      erro: "YouTube API nao configurada"
+    }, { status: 503 });
+  }
 
-      const cache = caches.default;
+  const cache = caches.default;
 
-      const videoKey = new Request(
-        url.origin + "/api/cache-youtube-v2"
-      );
+  const videoKey = new Request(
+    url.origin + "/api/cache-youtube-v3"
+  );
 
-      try {
+  try {
 
-        const cached = await cache.match(videoKey);
+    const cached = await cache.match(videoKey);
 
-        if (cached) {
-          return cached;
-        }
-
-        const apiUrl = new URL(
-          "https://www.googleapis.com/youtube/v3/search"
-        );
-
-        apiUrl.searchParams.set("part", "snippet");
-        apiUrl.searchParams.set("type", "video");
-        apiUrl.searchParams.set("channelId", "UC14UlmYlSNiQCBe9Eookf_A"); apiUrl.searchParams.set("q", "highlights|goals|gols|resumen");
-        apiUrl.searchParams.set("order", "date");
-        apiUrl.searchParams.set("maxResults", "25");
-        apiUrl.searchParams.set("videoEmbeddable", "true");
-        apiUrl.searchParams.set("videoSyndicated", "true");
-        apiUrl.searchParams.set("videoCategoryId", "17");
-        apiUrl.searchParams.set("regionCode", "BR");
-        apiUrl.searchParams.set(
-          "key",
-          env.YOUTUBE_API_KEY.trim()
-        );
-
-        const resposta = await fetch(apiUrl.toString());
-        const dados = await resposta.json();
-
-        if (!resposta.ok || dados.error) {
-          return Response.json({
-            erro: "Falha na API do YouTube",
-            statusAPI: resposta.status
-          }, { status: 502 });
-        }
-
-        const videos = (dados.items || [])
-          .filter(item => item.id?.videoId)
-          .map(item => ({
-            id: item.id.videoId,
-            titulo: item.snippet.title,
-            canal: item.snippet.channelTitle,
-            canalId: item.snippet.channelId,
-            publicadoEm: item.snippet.publishedAt,
-            imagem: item.snippet.thumbnails?.high?.url,
-            player: "https://www.youtube.com/embed/" +
-              item.id.videoId
-          }));
-
-        const resultado = Response.json({
-          sistema: "GOLSKY TV",
-          fonte: "YouTube",
-          atualizadoEm: new Date().toISOString(),
-          total: videos.length,
-          videos: videos
-        }, {
-          headers: {
-            "Cache-Control": "public, max-age=1800"
-          }
-        });
-
-        await cache.put(
-          videoKey,
-          resultado.clone()
-        ).catch(() => {});
-
-        return resultado;
-
-      } catch {
-
-        return Response.json({
-          erro: "Videos temporariamente indisponiveis"
-        }, { status: 503 });
-
-      }
+    if (cached) {
+      return cached;
     }
 
+    const canais = [
+      "@fcbarcelona",
+      "@realmadrid",
+      "@flamengo",
+      "@palmeiras",
+      "@corinthians",
+      "@saopaulofc",
+      "@santosfc",
+      "@LiverpoolFC",
+      "@mancity",
+      "@ManchesterUnited",
+      "@Arsenal",
+      "@ChelseaFC",
+      "@PSG",
+      "@FCBayern",
+      "@juventus",
+      "@LaLiga",
+      "@premierleague",
+      "@Bundesliga",
+      "@seriea",
+      "@CONMEBOL"
+    ];
 
-    // STATUS DO SISTEMA
+    const chave = env.YOUTUBE_API_KEY.trim();
+
+    async function consultar(endpoint, parametros) {
+
+      const endereco = new URL(
+        "https://www.googleapis.com/youtube/v3/" +
+        endpoint
+      );
+
+      for (const [nome, valor] of Object.entries(parametros)) {
+        endereco.searchParams.set(nome, valor);
+      }
+
+      endereco.searchParams.set("key", chave);
+
+      const resposta = await fetch(endereco.toString());
+      const dados = await resposta.json();
+
+      if (!resposta.ok || dados.error) {
+        throw new Error("Falha na API do YouTube");
+      }
+
+      return dados;
+    }
+
+    const listas = await Promise.allSettled(
+      canais.map(async canal => {
+
+        const dadosCanal = await consultar("channels", {
+          part: "contentDetails",
+          forHandle: canal
+        });
+
+        const playlist = dadosCanal.items?.[0]
+          ?.contentDetails?.relatedPlaylists?.uploads;
+
+        if (!playlist) {
+          return [];
+        }
+
+        const dados = await consultar("playlistItems", {
+          part: "snippet,contentDetails",
+          playlistId: playlist,
+          maxResults: "10"
+        });
+
+        return dados.items || [];
+
+      })
+    );
+
+    const itens = listas
+      .filter(lista => lista.status === "fulfilled")
+      .flatMap(lista => lista.value);
+
+    const candidatos = itens.filter(item => {
+
+      const titulo = item.snippet?.title || "";
+
+      const positivos =
+        /highlights|goals?|gols?|goles|resumen|melhores momentos|resumo|resum|golazo|tore|buts|reti/i;
+
+      const negativos =
+        /preview|training|treino|entrevista|interview|react|reaction|simula|gameplay|efootball|fifa gameplay/i;
+
+      return positivos.test(titulo) &&
+        !negativos.test(titulo) &&
+        item.contentDetails?.videoId;
+
+    });
+
+    const ids = [...new Set(
+      candidatos.map(item => item.contentDetails.videoId)
+    )];
+
+    const videos = [];
+
+    for (let i = 0; i < ids.length; i += 50) {
+
+      const grupo = ids.slice(i, i + 50);
+
+      const dados = await consultar("videos", {
+        part: "snippet,status,contentDetails",
+        id: grupo.join(",")
+      });
+
+      for (const item of dados.items || []) {
+
+        if (!item.status?.embeddable) continue;
+        if (item.status?.privacyStatus !== "public") continue;
+
+        const regiao = item.contentDetails?.regionRestriction;
+
+        if (regiao?.blocked?.includes("BR")) continue;
+
+        if (regiao?.allowed &&
+            !regiao.allowed.includes("BR")) continue;
+
+        const postagem = new Date(item.snippet.publishedAt);
+
+        const idade = Date.now() - postagem.getTime();
+
+        if (idade > 7 * 86400000) continue;
+
+        videos.push({
+
+          id: item.id,
+          titulo: item.snippet.title,
+          canal: item.snippet.channelTitle,
+          canalId: item.snippet.channelId,
+          publicadoEm: item.snippet.publishedAt,
+
+          imagem:
+            item.snippet.thumbnails?.high?.url ||
+            item.snippet.thumbnails?.medium?.url ||
+            "",
+
+          player:
+            "https://www.youtube.com/embed/" + item.id
+
+        });
+
+      }
+
+    }
+
+    videos.sort((a, b) =>
+      new Date(b.publicadoEm) -
+      new Date(a.publicadoEm)
+    );
+
+    const selecionados = videos.slice(0, 100);
+
+    if (listas.every(lista => lista.status === "rejected")) {
+      throw new Error("Canais indisponiveis");
+    }
+
+    const resultado = Response.json({
+
+      sistema: "GOLSKY TV MULTICLUBES",
+      fonte: "YouTube",
+      atualizadoEm: new Date().toISOString(),
+      canaisConsultados: canais.length,
+      total: selecionados.length,
+      videos: selecionados
+
+    }, {
+
+      headers: {
+        "Cache-Control": "public, max-age=1800"
+      }
+
+    });
+
+    await cache.put(
+      videoKey,
+      resultado.clone()
+    ).catch(() => {});
+
+    return resultado;
+
+  } catch {
+
+    return Response.json({
+
+      erro: "Videos temporariamente indisponiveis"
+
+    }, { status: 503 });
+
+  }
+
+}    // STATUS DO SISTEMA
     if (url.pathname === "/api/status") {
       return Response.json({
         sistema: "GOLSKY",
