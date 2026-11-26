@@ -2272,5 +2272,183 @@ Videos disponibilizados pelo ScoreBat, conforme disponibilidade.
 <!-- FIM GOLSKY TV -->
 
 
+<!-- GOLSKY TV YOUTUBE -->
+<style>
+#golsky-youtube {
+  max-width: 1200px;
+  margin: 20px auto;
+  padding: 18px;
+  background: #14243b;
+  border: 1px solid #304968;
+  border-radius: 16px;
+  color: white;
+}
+#golsky-youtube h2 {
+  color: #4ade80;
+  margin-bottom: 10px;
+}
+#golsky-video-lista {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+  max-height: 520px;
+  overflow-y: auto;
+}
+.golsky-video-card {
+  background: #203550;
+  border: 0;
+  border-radius: 12px;
+  padding: 10px;
+  color: white;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.golsky-video-card img {
+  width: 100%;
+  border-radius: 8px;
+  aspect-ratio: 16/9;
+  object-fit: cover;
+}
+.golsky-video-card:hover {
+  background: #304968;
+}
+#golsky-video-player iframe {
+  width: 100%;
+  aspect-ratio: 16/9;
+  border: 0;
+  border-radius: 12px;
+}
+#golsky-video-player {
+  margin-bottom: 15px;
+}
+#golsky-video-player a {
+  color: #4ade80;
+}
+</style>
+
+<section id="golsky-youtube">
+  <h2>⚽ GOLSKY TV</h2>
+  <p>Gols e melhores momentos do futebol mundial.</p>
+
+  <div id="golsky-video-player"></div>
+
+  <p id="golsky-video-status">
+    Carregando videos...
+  </p>
+
+  <div id="golsky-video-lista"></div>
+</section>
+
+<script>
+(function () {
+  const painel = document.getElementById("golsky-youtube");
+  const lista = document.getElementById("golsky-video-lista");
+  const player = document.getElementById("golsky-video-player");
+  const status = document.getElementById("golsky-video-status");
+
+  const tituloJogos = Array.from(
+    document.querySelectorAll("h1,h2,h3")
+  ).find(el =>
+    el.textContent.trim().toLowerCase() === "jogos de hoje"
+  );
+
+  if (tituloJogos) {
+    tituloJogos.before(painel);
+  }
+
+  function assistir(video) {
+    player.replaceChildren();
+
+    const iframe = document.createElement("iframe");
+
+    iframe.src =
+      "https://www.youtube.com/embed/" +
+      video.id + "?autoplay=1";
+
+    iframe.title = video.titulo;
+    iframe.allowFullscreen = true;
+    iframe.allow =
+      "autoplay; encrypted-media; picture-in-picture; fullscreen";
+    iframe.referrerPolicy =
+      "strict-origin-when-cross-origin";
+
+    const titulo = document.createElement("h3");
+    titulo.textContent = video.titulo;
+
+    const link = document.createElement("a");
+    link.href =
+      "https://www.youtube.com/watch?v=" + video.id;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = "Assistir no YouTube se necessario";
+
+    player.append(titulo, iframe, link);
+
+    player.scrollIntoView({
+      behavior: "smooth",
+      block: "center"
+    });
+  }
+
+  async function carregarVideos() {
+    try {
+      const resposta = await fetch("/api/videos");
+
+      if (!resposta.ok) {
+        throw new Error("Falha na API");
+      }
+
+      const dados = await resposta.json();
+
+      const videos = (dados.videos || []).filter(
+        video => /^[a-zA-Z0-9_-]{11}$/.test(video.id)
+      );
+
+      lista.replaceChildren();
+
+      status.textContent = videos.length
+        ? videos.length + " videos disponiveis"
+        : "Nenhum video disponivel no momento.";
+
+      videos.forEach(video => {
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "golsky-video-card";
+
+        const imagem = document.createElement("img");
+        imagem.src =
+          "https://i.ytimg.com/vi/" +
+          video.id + "/hqdefault.jpg";
+        imagem.loading = "lazy";
+        imagem.alt = video.titulo;
+
+        const titulo = document.createElement("strong");
+        titulo.textContent = video.titulo;
+
+        const canal = document.createElement("p");
+        canal.textContent = video.canal;
+
+        card.append(imagem, titulo, canal);
+
+        card.onclick = () => assistir(video);
+
+        lista.appendChild(card);
+      });
+
+    } catch (erro) {
+      status.textContent =
+        "Videos temporariamente indisponiveis.";
+    }
+  }
+
+  carregarVideos();
+
+  setInterval(carregarVideos, 1800000);
+})();
+</script>
+<!-- FIM GOLSKY TV YOUTUBE -->
+
+
 </body>
 </html>
