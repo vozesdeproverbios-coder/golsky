@@ -39,6 +39,98 @@ export default {
         });
       }
     }
+    // GOLSKY TV - YOUTUBE
+    if (url.pathname === "/api/videos") {
+
+      if (!env.YOUTUBE_API_KEY) {
+        return Response.json({
+          erro: "YouTube API nao configurada"
+        }, { status: 503 });
+      }
+
+      const cache = caches.default;
+
+      const videoKey = new Request(
+        url.origin + "/api/cache-youtube-v1"
+      );
+
+      try {
+
+        const cached = await cache.match(videoKey);
+
+        if (cached) {
+          return cached;
+        }
+
+        const apiUrl = new URL(
+          "https://www.googleapis.com/youtube/v3/search"
+        );
+
+        apiUrl.searchParams.set("part", "snippet");
+        apiUrl.searchParams.set("type", "video");
+        apiUrl.searchParams.set("q", "football highlights gols");
+        apiUrl.searchParams.set("order", "date");
+        apiUrl.searchParams.set("maxResults", "25");
+        apiUrl.searchParams.set("videoEmbeddable", "true");
+        apiUrl.searchParams.set("videoSyndicated", "true");
+        apiUrl.searchParams.set("videoCategoryId", "17");
+        apiUrl.searchParams.set("regionCode", "BR");
+        apiUrl.searchParams.set(
+          "key",
+          env.YOUTUBE_API_KEY.trim()
+        );
+
+        const resposta = await fetch(apiUrl.toString());
+        const dados = await resposta.json();
+
+        if (!resposta.ok || dados.error) {
+          return Response.json({
+            erro: "Falha na API do YouTube",
+            statusAPI: resposta.status
+          }, { status: 502 });
+        }
+
+        const videos = (dados.items || [])
+          .filter(item => item.id?.videoId)
+          .map(item => ({
+            id: item.id.videoId,
+            titulo: item.snippet.title,
+            canal: item.snippet.channelTitle,
+            canalId: item.snippet.channelId,
+            publicadoEm: item.snippet.publishedAt,
+            imagem: item.snippet.thumbnails?.high?.url,
+            player: "https://www.youtube.com/embed/" +
+              item.id.videoId
+          }));
+
+        const resultado = Response.json({
+          sistema: "GOLSKY TV",
+          fonte: "YouTube",
+          atualizadoEm: new Date().toISOString(),
+          total: videos.length,
+          videos: videos
+        }, {
+          headers: {
+            "Cache-Control": "public, max-age=1800"
+          }
+        });
+
+        await cache.put(
+          videoKey,
+          resultado.clone()
+        ).catch(() => {});
+
+        return resultado;
+
+      } catch {
+
+        return Response.json({
+          erro: "Videos temporariamente indisponiveis"
+        }, { status: 503 });
+
+      }
+    }
+
 
     // STATUS DO SISTEMA
     if (url.pathname === "/api/status") {
