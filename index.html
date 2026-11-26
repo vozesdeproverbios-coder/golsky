@@ -2449,6 +2449,276 @@ Videos disponibilizados pelo ScoreBat, conforme disponibilidade.
 </script>
 <!-- FIM GOLSKY TV YOUTUBE -->
 
+<!-- INICIO CENTRAL GOLSKY TV 10.0 -->
 
+<style>
+#golsky-central{
+  max-width:1100px;
+  margin:20px auto;
+  padding:16px;
+  background:#111f35;
+  border:1px solid #344e70;
+  border-radius:16px;
+}
+
+#golsky-central h2{
+  color:#39e58c;
+}
+
+.gtv-menu{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin:16px 0;
+}
+
+.gtv-btn{
+  background:#203550;
+  color:white;
+  padding:12px 16px;
+  border:1px solid #344e70;
+}
+
+.gtv-btn.active{
+  background:#39e58c;
+  color:#081b12;
+}
+
+#golsky-central section{
+  margin:0;
+  padding:10px;
+  border:0;
+}
+
+#golsky-central [hidden]{
+  display:none!important;
+}
+
+#gtv-info{
+  color:#aabbd0;
+  font-size:14px;
+}
+</style>
+
+<script>
+(function(){
+
+const youtube=document.getElementById("golsky-youtube");
+const scorebat=document.getElementById("golsky-tv");
+const lista=document.getElementById("golsky-video-lista");
+const player=document.getElementById("golsky-video-player");
+const status=document.getElementById("golsky-video-status");
+
+if(!youtube||!scorebat||!lista||!player)return;
+
+document.documentElement.setAttribute("translate","no");
+
+const central=document.createElement("div");
+central.id="golsky-central";
+
+central.innerHTML=`
+<h2 translate="no">⚽ GOLSKY TV</h2>
+<p>O mundo do futebol em um só lugar</p>
+
+<div class="gtv-menu">
+
+<button type="button" class="gtv-btn active"
+data-mode="favorites">
+⭐ Meus favoritos
+</button>
+
+<button type="button" class="gtv-btn"
+data-mode="all">
+🌍 Todos os vídeos
+</button>
+
+<button type="button" class="gtv-btn"
+data-mode="highlights">
+🏆 Melhores momentos
+</button>
+
+</div>
+
+<p id="gtv-info"></p>
+`;
+
+youtube.before(central);
+
+central.append(youtube,scorebat);
+
+[youtube,scorebat].forEach(panel=>{
+  const heading=panel.querySelector("h2");
+  if(heading)heading.hidden=true;
+});
+
+const info=document.getElementById("gtv-info");
+
+let mode="favorites";
+
+const knownTeams={
+  "529":["Barcelona","FC Barcelona","Barça"],
+  "541":["Real Madrid"],
+  "127":["Flamengo"],
+  "121":["Palmeiras"],
+  "131":["Corinthians"],
+  "126":["São Paulo","Sao Paulo"],
+  "133":["Santos"],
+  "40":["Liverpool"],
+  "50":["Manchester City"],
+  "33":["Manchester United"],
+  "42":["Arsenal"],
+  "85":["PSG","Paris Saint Germain"]
+};
+
+function clean(text){
+  return String(text||"")
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g,"")
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g," ")
+  .trim();
+}
+
+function favoriteNames(){
+
+  let ids=[];
+
+  try{
+    ids=JSON.parse(
+      localStorage.getItem("golsky_favoritos")||"[]"
+    ).map(String);
+  }catch(e){}
+
+  const names=new Set();
+
+  ids.forEach(id=>{
+    (knownTeams[id]||[]).forEach(name=>{
+      names.add(clean(name));
+    });
+  });
+
+  if(typeof allGames!=="undefined"){
+
+    allGames.forEach(game=>{
+
+      [game.teams.home,game.teams.away]
+      .forEach(team=>{
+
+        if(ids.includes(String(team.id))){
+          names.add(clean(team.name));
+        }
+
+      });
+
+    });
+
+  }
+
+  return [...names].filter(Boolean);
+
+}
+
+function update(){
+
+  youtube.hidden=mode==="highlights";
+  scorebat.hidden=mode!=="highlights";
+
+  central.querySelectorAll(".gtv-btn")
+  .forEach(btn=>{
+
+    const active=btn.dataset.mode===mode;
+
+    btn.classList.toggle("active",active);
+    btn.setAttribute("aria-pressed",String(active));
+
+  });
+
+  if(mode==="highlights"){
+
+    info.textContent=
+    "Melhores momentos do futebol mundial — ScoreBat.";
+
+    return;
+
+  }
+
+  const names=favoriteNames();
+
+  let total=0;
+
+  lista.querySelectorAll(".golsky-video-card")
+  .forEach(card=>{
+
+    const title=clean(
+      card.querySelector("strong")?.textContent
+    );
+
+    const match=mode==="all"||
+      names.some(name=>
+        (" "+title+" ").includes(" "+name+" ")
+      );
+
+    card.hidden=!match;
+
+    if(match)total++;
+
+  });
+
+  if(mode==="favorites"){
+
+    info.textContent=total
+    ?total+" vídeos relacionados aos seus favoritos."
+    :"Nenhum vídeo dos seus favoritos encontrado no catálogo atual.";
+
+  }else{
+
+    info.textContent=
+    total+" vídeos disponíveis no catálogo.";
+
+  }
+
+  if(status){
+    status.hidden=lista.children.length>0;
+  }
+
+}
+
+central.querySelectorAll(".gtv-btn")
+.forEach(btn=>{
+
+  btn.onclick=()=>{
+
+    mode=btn.dataset.mode;
+
+    player.replaceChildren();
+
+    update();
+
+  };
+
+});
+
+const observer=new MutationObserver(update);
+
+observer.observe(lista,{
+  childList:true
+});
+
+document.addEventListener("click",event=>{
+
+  if(event.target.closest(".favorite-star")){
+    setTimeout(update,0);
+  }
+
+});
+
+setInterval(update,3000);
+
+update();
+
+})();
+</script>
+
+<!-- FIM CENTRAL GOLSKY TV 10.0 -->
 </body>
 </html>
