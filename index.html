@@ -2795,5 +2795,183 @@ setInterval(atualizarDatas,1800000);
 })();
 </script>
 <!-- FIM GOLSKY TV - DATAS DOS VIDEOS -->
+
+<!-- GOLSKY TV 11.0 - CALENDARIO -->
+<style>
+#gtv-datas{
+display:flex;
+flex-wrap:wrap;
+gap:8px;
+margin:15px 0;
+}
+
+.gtv-data-btn{
+background:#203550;
+color:white;
+border:1px solid #344e70;
+padding:10px 14px;
+}
+
+.gtv-data-btn.active{
+background:#39e58c;
+color:#081b12;
+}
+
+#gtv-calendario{
+background:#203550;
+color:white;
+border:1px solid #344e70;
+border-radius:8px;
+padding:10px;
+color-scheme:dark;
+}
+
+.golsky-video-card.gtv-data-oculta{
+display:none!important;
+}
+
+#gtv-resultado-data{
+color:#39e58c;
+font-size:13px;
+}
+</style>
+
+<script>
+(function(){
+
+const central=document.getElementById("golsky-central");
+const lista=document.getElementById("golsky-video-lista");
+const youtube=document.getElementById("golsky-youtube");
+
+if(!central||!lista||!youtube)return;
+
+const painel=document.createElement("div");
+
+painel.innerHTML=`
+<div id="gtv-datas">
+
+<button type="button" class="gtv-data-btn"
+data-periodo="hoje">Hoje</button>
+
+<button type="button" class="gtv-data-btn"
+data-periodo="ontem">Ontem</button>
+
+<button type="button" class="gtv-data-btn active"
+data-periodo="todos">Todos os dias</button>
+
+<input type="date" id="gtv-calendario"
+aria-label="Escolher data de publicacao">
+
+</div>
+
+<p id="gtv-resultado-data"></p>
+`;
+
+youtube.prepend(painel);
+
+const calendario=document.getElementById("gtv-calendario");
+const resultado=document.getElementById("gtv-resultado-data");
+
+let periodo="todos";
+
+function dataBrasil(date){
+
+return new Intl.DateTimeFormat("pt-BR",{
+timeZone:"America/Sao_Paulo",
+day:"2-digit",
+month:"2-digit",
+year:"numeric"
+}).format(date);
+
+}
+
+function aplicar(){
+
+const hoje=dataBrasil(new Date());
+
+const ontem=dataBrasil(
+new Date(Date.now()-86400000)
+);
+
+calendario.max=hoje.split("/").reverse().join("-");
+
+const escolhida=calendario.value
+.split("-").reverse().join("/");
+
+let total=0;
+
+lista.querySelectorAll(".golsky-video-card")
+.forEach(card=>{
+
+const campo=card.querySelector(".gtv-publicacao");
+
+const data=campo?.textContent.match(
+/\d{2}\/\d{2}\/\d{4}/
+)?.[0];
+
+const mostrar=
+periodo==="todos"||
+(periodo==="hoje"&&data===hoje)||
+(periodo==="ontem"&&data===ontem)||
+(periodo==="data"&&data===escolhida);
+
+card.classList.toggle(
+"gtv-data-oculta",!mostrar
+);
+
+if(mostrar&&!card.hidden)total++;
+
+});
+
+resultado.textContent=total
+?total+" videos nesta selecao."
+:"Nenhum video disponivel nesta selecao.";
+
+painel.querySelectorAll(".gtv-data-btn")
+.forEach(btn=>{
+
+btn.classList.toggle(
+"active",btn.dataset.periodo===periodo
+);
+
+});
+
+}
+
+painel.querySelectorAll(".gtv-data-btn")
+.forEach(btn=>{
+
+btn.onclick=()=>{
+
+periodo=btn.dataset.periodo;
+calendario.value="";
+aplicar();
+
+};
+
+});
+
+calendario.onchange=()=>{
+
+periodo=calendario.value?"data":"todos";
+aplicar();
+
+};
+
+central.addEventListener("click",event=>{
+
+if(event.target.closest(".gtv-btn")){
+setTimeout(aplicar,0);
+}
+
+});
+
+setInterval(aplicar,1000);
+
+aplicar();
+
+})();
+</script>
+<!-- FIM GOLSKY TV 11.0 - CALENDARIO -->
 </body>
 </html>
