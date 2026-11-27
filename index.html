@@ -2720,5 +2720,80 @@ update();
 </script>
 
 <!-- FIM CENTRAL GOLSKY TV 10.0 -->
+
+
+<!-- GOLSKY TV - DATAS DOS VIDEOS -->
+<script>
+(function(){
+
+const lista=document.getElementById("golsky-video-lista");
+if(!lista)return;
+
+let datas=new Map();
+
+function mostrarDatas(){
+
+lista.querySelectorAll(".golsky-video-card").forEach(card=>{
+
+const img=card.querySelector("img");
+if(!img)return;
+
+const id=img.src.split("/vi/")[1]?.split("/")[0];
+const data=datas.get(id);
+
+if(!data)return;
+
+let campo=card.querySelector(".gtv-publicacao");
+
+if(!campo){
+campo=document.createElement("div");
+campo.className="gtv-publicacao";
+campo.style.color="#39e58c";
+campo.style.fontSize="12px";
+campo.style.marginTop="8px";
+card.appendChild(campo);
+}
+
+campo.textContent="📅 Publicado em "+
+new Date(data).toLocaleString("pt-BR",{
+timeZone:"America/Sao_Paulo",
+day:"2-digit",
+month:"2-digit",
+year:"numeric",
+hour:"2-digit",
+minute:"2-digit"
+});
+
+});
+
+}
+
+async function atualizarDatas(){
+
+try{
+
+const resposta=await fetch("/api/videos");
+const dados=await resposta.json();
+
+datas=new Map(
+(dados.videos||[]).filter(v=>v.publicadoEm)
+.map(v=>[v.id,v.publicadoEm])
+);
+
+mostrarDatas();
+
+}catch(e){}
+
+}
+
+const observer=new MutationObserver(mostrarDatas);
+observer.observe(lista,{childList:true});
+
+atualizarDatas();
+setInterval(atualizarDatas,1800000);
+
+})();
+</script>
+<!-- FIM GOLSKY TV - DATAS DOS VIDEOS -->
 </body>
 </html>
