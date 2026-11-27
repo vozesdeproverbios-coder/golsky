@@ -6,21 +6,5 @@
   "assets": {
     "directory": ".",
     "binding": "ASSETS"
-  },
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "GOLSKY_CONTROL",
-        "class_name": "GolskyControl"
-      }
-    ]
-  },
-  "migrations": [
-    {
-      "tag": "v1",
-      "new_sqlite_classes": [
-        "GolskyControl"
-      ]
-    }
-  ]
+  }
 }
