@@ -1,51 +1,377 @@
 
-const CACHE_SECONDS = 300;
-const BACKUP_SECONDS = 86400;
-const RETRY_SECONDS = 120;
-const EVENTS_CACHE_SECONDS = 300;
+// GOLSKY WORKER 7.0
+// CONTROLE INTELIGENTE DE API
+
+const TIMEZONE = "America/Sao_Paulo";
+const CACHE_SECONDS = 1200;
+const EVENTS_CACHE_SECONDS = 900;
 const FUTURE_CACHE_SECONDS = 10800;
 const YESTERDAY_CACHE_SECONDS = 21600;
 const HISTORY_CACHE_SECONDS = 86400;
-const TIMEZONE = "America/Sao_Paulo";
+const BACKUP_SECONDS = 86400;
 
-export default {
-  async fetch(request, env) {
+const DAILY_LIMIT = 90;
+const SECONDARY_LIMIT = 20;
+const MIN_INTERVAL = 15000;
+const RETRY_SECONDS = 180;
+
+function json(data, status = 200) {
+  return Response.json(data, {
+    status,
+    headers: {
+      "Cache-Control": "no-store"
+    }
+  });
+}
+
+function hojeBrasil() {
+  const partes = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date());
+
+  const obter = tipo =>
+    partes.find(p => p.type === tipo).value;
+
+  return obter("year") + "-" +
+    obter("month") + "-" +
+    obter("day");
+}
+
+// CONTROLADOR CENTRAL
+
+export class GolskyControl {
+
+  constructor(ctx, env) {
+    this.ctx = ctx;
+    this.env = env;
+    this.ocupado = false;
+
+    this.sql = ctx.storage.sql;
+
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS controle (
+        id INTEGER PRIMARY KEY,
+        dia TEXT NOT NULL,
+        consultas INTEGER NOT NULL,
+        secundarias INTEGER NOT NULL,
+        ultima INTEGER NOT NULL,
+        bloqueio INTEGER NOT NULL
+      )
+    `);
+
+    this.sql.exec(`
+      CREATE TABLE IF NOT EXISTS resultados (
+        chave TEXT PRIMARY KEY,
+        dados TEXT NOT NULL,
+        atualizado INTEGER NOT NULL,
+        validade INTEGER NOT NULL
+      )
+    `);
+  }
+
+  estado() {
+    const dia = new Date().toISOString().slice(0, 10);
+
+    this.sql.exec(`
+      INSERT OR IGNORE INTO controle
+      VALUES (1, ?, 0, 0, 0, 0)
+    `, dia);
+
+    this.sql.exec(`
+      UPDATE controle
+      SET dia = ?, consultas = 0, secundarias = 0
+      WHERE id = 1 AND dia != ?
+    `, dia, dia);
+
+    return this.sql.exec(`
+      SELECT * FROM controle WHERE id = 1
+    `).toArray()[0];
+  }
+
+  async fetch(request) {
+
     const url = new URL(request.url);
+    const estado = this.estado();
 
-    // ESCUDOS DOS TIMES
-    if (/^\/escudos\/\d+\.png$/.test(url.pathname)) {
-      const id = url.pathname.split("/").pop();
+    if (url.pathname === "/status") {
+      return json({
+        sistema: "GOLSKY CONTROL 7.0",
+        status: "online",
+        diaUTC: estado.dia,
+        consultasRealizadas: estado.consultas,
+        consultasSecundarias: estado.secundarias,
+        limiteInterno: DAILY_LIMIT,
+        limitePlano: 100,
+        saldoInterno: Math.max(
+          0, DAILY_LIMIT - estado.consultas
+        ),
+        intervaloMinimoSegundos: MIN_INTERVAL / 1000,
+        bloqueado: estado.bloqueio > Date.now(),
+        bloqueadoAte: estado.bloqueio > Date.now()
+          ? new Date(estado.bloqueio).toISOString()
+          : null,
+        consultaEmAndamento: this.ocupado
+      });
+    }
 
-      try {
-        const imagem = await fetch(
-          "https://media.api-sports.io/football/teams/" + id
+    if (url.pathname !== "/consultar" ||
+        request.method !== "POST") {
+      return json({ erro: "Rota invalida" }, 404);
+    }
+
+    const entrada = await request.json();
+
+    const tipo = entrada.tipo;
+    const valor = String(entrada.valor || "");
+
+    if (
+      !["jogos", "eventos"].includes(tipo) ||
+      (tipo === "eventos" &&
+        !/^[1-9]\d{0,11}$/.test(valor)) ||
+      (tipo === "jogos" &&
+        !/^\d{4}-\d{2}-\d{2}$/.test(valor))
+    ) {
+      return json({ erro: "Consulta invalida" }, 400);
+    }
+
+    const chave = tipo + ":" + valor;
+    const agora = Date.now();
+
+    const registro = this.sql.exec(`
+      SELECT * FROM resultados WHERE chave = ?
+    `, chave).toArray()[0];
+
+    function entregar(registro, desatualizado, motivo) {
+      const dados = JSON.parse(registro.dados);
+
+      dados.golsky = {
+        ...dados.golsky,
+        desatualizado,
+        aviso: motivo || null
+      };
+
+      return json(dados);
+    }
+
+    function backup(motivo) {
+      if (registro &&
+          agora - registro.atualizado <=
+          BACKUP_SECONDS * 1000) {
+        return entregar(registro, true, motivo);
+      }
+
+      return json({
+        erro: motivo,
+        response: [],
+        golsky: {
+          desatualizado: true
+        }
+      }, 503);
+    }
+
+    if (registro && registro.validade > agora) {
+      return entregar(registro, false, null);
+    }
+
+    const secundario =
+      tipo === "eventos" || valor !== hojeBrasil();
+
+    if (estado.consultas >= DAILY_LIMIT) {
+      return backup("Limite interno diario atingido");
+    }
+
+    if (secundario &&
+        estado.secundarias >= SECONDARY_LIMIT) {
+      return backup("Limite de consultas secundarias");
+    }
+
+    if (estado.bloqueio > agora) {
+      return backup("API em espera de seguranca");
+    }
+
+    if (this.ocupado) {
+      return backup("Atualizacao em andamento");
+    }
+
+    if (agora - estado.ultima < MIN_INTERVAL) {
+      return backup("Intervalo de seguranca");
+    }
+
+    if (!this.env.API_FOOTBALL_KEY) {
+      return backup("API nao configurada");
+    }
+
+    this.ocupado = true;
+
+    try {
+
+      this.sql.exec(`
+        UPDATE controle
+        SET consultas = consultas + 1,
+            secundarias = secundarias + ?,
+            ultima = ?
+        WHERE id = 1
+      `, secundario ? 1 : 0, agora);
+
+      const endereco = new URL(
+        tipo === "eventos"
+          ? "https://v3.football.api-sports.io/fixtures/events"
+          : "https://v3.football.api-sports.io/fixtures"
+      );
+
+      if (tipo === "eventos") {
+        endereco.searchParams.set("fixture", valor);
+      } else {
+        endereco.searchParams.set("date", valor);
+        endereco.searchParams.set("timezone", TIMEZONE);
+      }
+
+      const resposta = await fetch(endereco.toString(), {
+        headers: {
+          "x-apisports-key":
+            this.env.API_FOOTBALL_KEY.trim()
+        },
+        signal: AbortSignal.timeout(15000)
+      });
+
+      const dados = await resposta.json();
+
+      const saldoHeader = resposta.headers.get(
+        "x-ratelimit-requests-remaining"
+      );
+
+      const saldoAPI = saldoHeader !== null
+        ? Number(saldoHeader)
+        : null;
+
+      if (saldoAPI !== null &&
+          Number.isFinite(saldoAPI)) {
+
+        const consumidas = Math.max(
+          0, 100 - saldoAPI
         );
 
-        if (!imagem.ok) {
-          return new Response("Escudo indisponivel", {
-            status: 404
-          });
-        }
-
-        return new Response(imagem.body, {
-          headers: {
-            "Content-Type": "image/png",
-            "Cache-Control": "public, max-age=86400"
-          }
-        });
-      } catch {
-        return new Response("Falha ao carregar escudo", {
-          status: 502
-        });
+        this.sql.exec(`
+          UPDATE controle
+          SET consultas = MAX(consultas, ?)
+          WHERE id = 1
+        `, consumidas);
       }
+
+      if (
+        !resposta.ok ||
+        Object.keys(dados.errors || {}).length > 0 ||
+        !Array.isArray(dados.response)
+      ) {
+        console.error(
+          "GOLSKY CONTROL:",
+          resposta.status,
+          JSON.stringify(dados.errors || {})
+        );
+
+        throw new Error("Falha ou limite da API");
+      }
+
+      let tempoCache = CACHE_SECONDS;
+      let periodo = "hoje";
+
+      if (tipo === "eventos") {
+
+        tempoCache = EVENTS_CACHE_SECONDS;
+
+      } else {
+
+        const diferenca = Math.round(
+          (
+            Date.parse(valor + "T00:00:00Z") -
+            Date.parse(hojeBrasil() + "T00:00:00Z")
+          ) / 86400000
+        );
+
+        if (diferenca === -1) {
+          tempoCache = YESTERDAY_CACHE_SECONDS;
+          periodo = "ontem";
+        } else if (diferenca < -1) {
+          tempoCache = HISTORY_CACHE_SECONDS;
+          periodo = "historico";
+        } else if (diferenca > 0) {
+          tempoCache = FUTURE_CACHE_SECONDS;
+          periodo = "futuro";
+        } else {
+
+          const aoVivo = dados.response.some(jogo =>
+            ["1H", "HT", "2H", "ET", "BT", "P", "LIVE"]
+              .includes(jogo.fixture?.status?.short)
+          );
+
+          tempoCache = aoVivo ? 1200 : 3600;
+        }
+      }
+
+      const atualizado = Date.now();
+
+      dados.golsky = {
+        atualizadoEm: new Date(atualizado).toISOString(),
+        desatualizado: false,
+        cacheSegundos: tempoCache,
+        timezone: TIMEZONE,
+        ...(tipo === "eventos"
+          ? { partida: valor }
+          : { data: valor, periodo })
+      };
+
+      this.sql.exec(`
+        INSERT INTO resultados
+        (chave, dados, atualizado, validade)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(chave) DO UPDATE SET
+          dados = excluded.dados,
+          atualizado = excluded.atualizado,
+          validade = excluded.validade
+      `,
+        chave,
+        JSON.stringify(dados),
+        atualizado,
+        atualizado + tempoCache * 1000
+      );
+
+      this.sql.exec(`
+        DELETE FROM resultados
+        WHERE atualizado < ?
+      `, atualizado - 7 * 86400000);
+
+      return json(dados);
+
+    } catch (erro) {
+
+      console.error("GOLSKY:", erro.message);
+
+      this.sql.exec(`
+        UPDATE controle SET bloqueio = ?
+        WHERE id = 1
+      `, Date.now() + RETRY_SECONDS * 1000);
+
+      return backup(
+        "API temporariamente indisponivel"
+      );
+
+    } finally {
+      this.ocupado = false;
     }
-   // GOLSKY TV - MULTICLUBES
-if (url.pathname === "/api/videos") {
+  }
+}
+
+// GOLSKY TV MULTICLUBES
+
+async function carregarVideos(url, env) {
 
   if (!env.YOUTUBE_API_KEY) {
-    return Response.json({
+    return json({
       erro: "YouTube API nao configurada"
-    }, { status: 503 });
+    }, 503);
   }
 
   const cache = caches.default;
@@ -57,10 +383,7 @@ if (url.pathname === "/api/videos") {
   try {
 
     const cached = await cache.match(videoKey);
-
-    if (cached) {
-      return cached;
-    }
+    if (cached) return cached;
 
     const canais = [
       "@fcbarcelona",
@@ -85,8 +408,6 @@ if (url.pathname === "/api/videos") {
       "@CONMEBOL"
     ];
 
-    const chave = env.YOUTUBE_API_KEY.trim();
-
     async function consultar(endpoint, parametros) {
 
       const endereco = new URL(
@@ -94,13 +415,19 @@ if (url.pathname === "/api/videos") {
         endpoint
       );
 
-      for (const [nome, valor] of Object.entries(parametros)) {
+      for (const [nome, valor] of
+        Object.entries(parametros)) {
         endereco.searchParams.set(nome, valor);
       }
 
-      endereco.searchParams.set("key", chave);
+      endereco.searchParams.set(
+        "key", env.YOUTUBE_API_KEY.trim()
+      );
 
-      const resposta = await fetch(endereco.toString());
+      const resposta = await fetch(
+        endereco.toString()
+      );
+
       const dados = await resposta.json();
 
       if (!resposta.ok || dados.error) {
@@ -110,31 +437,50 @@ if (url.pathname === "/api/videos") {
       return dados;
     }
 
-    const listas = await Promise.allSettled(
-      canais.map(async canal => {
+    const listas = [];
 
-        const dadosCanal = await consultar("channels", {
-          part: "contentDetails",
-          forHandle: canal
-        });
+    // Lotes pequenos para evitar excesso
+    // de conexoes simultaneas.
 
-        const playlist = dadosCanal.items?.[0]
-          ?.contentDetails?.relatedPlaylists?.uploads;
+    for (let i = 0; i < canais.length; i += 5) {
 
-        if (!playlist) {
-          return [];
-        }
+      const grupo = canais.slice(i, i + 5);
 
-        const dados = await consultar("playlistItems", {
-          part: "snippet,contentDetails",
-          playlistId: playlist,
-          maxResults: "10"
-        });
+      const resultados = await Promise.allSettled(
+        grupo.map(async canal => {
 
-        return dados.items || [];
+          const dadosCanal = await consultar(
+            "channels", {
+              part: "contentDetails",
+              forHandle: canal
+            }
+          );
 
-      })
-    );
+          const playlist = dadosCanal.items?.[0]
+            ?.contentDetails?.relatedPlaylists?.uploads;
+
+          if (!playlist) return [];
+
+          const dados = await consultar(
+            "playlistItems", {
+              part: "snippet,contentDetails",
+              playlistId: playlist,
+              maxResults: "10"
+            }
+          );
+
+          return dados.items || [];
+        })
+      );
+
+      listas.push(...resultados);
+    }
+
+    if (listas.every(
+      lista => lista.status === "rejected"
+    )) {
+      throw new Error("Canais indisponiveis");
+    }
 
     const itens = listas
       .filter(lista => lista.status === "fulfilled")
@@ -153,11 +499,12 @@ if (url.pathname === "/api/videos") {
       return positivos.test(titulo) &&
         !negativos.test(titulo) &&
         item.contentDetails?.videoId;
-
     });
 
     const ids = [...new Set(
-      candidatos.map(item => item.contentDetails.videoId)
+      candidatos.map(
+        item => item.contentDetails.videoId
+      )
     )];
 
     const videos = [];
@@ -174,41 +521,42 @@ if (url.pathname === "/api/videos") {
       for (const item of dados.items || []) {
 
         if (!item.status?.embeddable) continue;
-        if (item.status?.privacyStatus !== "public") continue;
 
-        const regiao = item.contentDetails?.regionRestriction;
+        if (item.status?.privacyStatus !== "public")
+          continue;
 
-        if (regiao?.blocked?.includes("BR")) continue;
+        const regiao =
+          item.contentDetails?.regionRestriction;
+
+        if (regiao?.blocked?.includes("BR"))
+          continue;
 
         if (regiao?.allowed &&
-            !regiao.allowed.includes("BR")) continue;
+            !regiao.allowed.includes("BR"))
+          continue;
 
-        const postagem = new Date(item.snippet.publishedAt);
+        const postagem =
+          new Date(item.snippet.publishedAt);
 
-        const idade = Date.now() - postagem.getTime();
-
-        if (idade > 7 * 86400000) continue;
+        if (Date.now() - postagem.getTime() >
+            7 * 86400000)
+          continue;
 
         videos.push({
-
           id: item.id,
           titulo: item.snippet.title,
           canal: item.snippet.channelTitle,
           canalId: item.snippet.channelId,
           publicadoEm: item.snippet.publishedAt,
-
           imagem:
             item.snippet.thumbnails?.high?.url ||
             item.snippet.thumbnails?.medium?.url ||
             "",
-
           player:
-            "https://www.youtube.com/embed/" + item.id
-
+            "https://www.youtube.com/embed/" +
+            item.id
         });
-
       }
-
     }
 
     videos.sort((a, b) =>
@@ -218,50 +566,95 @@ if (url.pathname === "/api/videos") {
 
     const selecionados = videos.slice(0, 100);
 
-    if (listas.every(lista => lista.status === "rejected")) {
-      throw new Error("Canais indisponiveis");
-    }
-
     const resultado = Response.json({
-
       sistema: "GOLSKY TV MULTICLUBES",
       fonte: "YouTube",
       atualizadoEm: new Date().toISOString(),
       canaisConsultados: canais.length,
       total: selecionados.length,
       videos: selecionados
-
     }, {
-
       headers: {
         "Cache-Control": "public, max-age=1800"
       }
-
     });
 
     await cache.put(
-      videoKey,
-      resultado.clone()
+      videoKey, resultado.clone()
     ).catch(() => {});
 
     return resultado;
 
-  } catch {
+  } catch (erro) {
 
-    return Response.json({
+    console.error("GOLSKY TV:", erro.message);
 
+    return json({
       erro: "Videos temporariamente indisponiveis"
-
-    }, { status: 503 });
-
+    }, 503);
   }
+}
 
-}    // STATUS DO SISTEMA
+// SERVIDOR PRINCIPAL
+
+export default {
+
+  async fetch(request, env) {
+
+    const url = new URL(request.url);
+
+    // ESCUDOS
+
+    if (/^\/escudos\/\d+\.png$/.test(url.pathname)) {
+
+      const id = url.pathname.split("/").pop();
+
+      try {
+
+        const imagem = await fetch(
+          "https://media.api-sports.io/football/teams/" +
+          id
+        );
+
+        if (!imagem.ok) {
+          return new Response(
+            "Escudo indisponivel",
+            { status: 404 }
+          );
+        }
+
+        return new Response(imagem.body, {
+          headers: {
+            "Content-Type": "image/png",
+            "Cache-Control": "public, max-age=86400"
+          }
+        });
+
+      } catch {
+
+        return new Response(
+          "Falha ao carregar escudo",
+          { status: 502 }
+        );
+      }
+    }
+
+    // VIDEOS
+
+    if (url.pathname === "/api/videos") {
+      return carregarVideos(url, env);
+    }
+
+    // STATUS
+
     if (url.pathname === "/api/status") {
-      return Response.json({
+
+      return json({
         sistema: "GOLSKY",
         status: "online",
+        versao: "7.0",
         apiConfigurada: Boolean(env.API_FOOTBALL_KEY),
+        controleCentral: Boolean(env.GOLSKY_CONTROL),
         cacheSegundos: CACHE_SECONDS,
         cacheEventos: EVENTS_CACHE_SECONDS,
         cacheFuturo: FUTURE_CACHE_SECONDS,
@@ -271,425 +664,128 @@ if (url.pathname === "/api/videos") {
         modo: "calendario-mundial",
         calendario: true,
         eventos: true,
-        versao: "6.2"
+        limiteInterno: DAILY_LIMIT
       });
     }
 
-    // CONSULTA DE LANCES E EVENTOS
-    if (url.pathname === "/api/eventos") {
+    // ROTAS DE FUTEBOL
 
-      if (!env.API_FOOTBALL_KEY) {
-        return Response.json({
-          erro: "API nao configurada"
-        }, { status: 503 });
+    if ([
+      "/api/jogos",
+      "/api/eventos",
+      "/api/controle"
+    ].includes(url.pathname)) {
+
+      if (!env.GOLSKY_CONTROL) {
+        return json({
+          erro: "Controlador ainda nao configurado"
+        }, 503);
       }
 
-      const id = url.searchParams.get("id");
+      const id = env.GOLSKY_CONTROL.idFromName(
+        "golsky-central-global"
+      );
 
-      if (!id || !/^[1-9]\d{0,11}$/.test(id)) {
-        return Response.json({
-          erro: "ID da partida invalido"
-        }, { status: 400 });
+      const central = env.GOLSKY_CONTROL.get(id);
+
+      if (url.pathname === "/api/controle") {
+        return central.fetch(
+          "https://golsky.internal/status"
+        );
       }
 
-      const cache = caches.default;
+      let tipo;
+      let valor;
 
-      const eventKey = new Request(
-        url.origin + "/api/cache-eventos/" + id
-      );
+      if (url.pathname === "/api/eventos") {
 
-      const eventBackupKey = new Request(
-        url.origin + "/api/backup-eventos/" + id
-      );
+        tipo = "eventos";
+        valor = url.searchParams.get("id");
 
-      const eventRetryKey = new Request(
-        url.origin + "/api/retry-eventos/" + id
-      );
-
-      async function backupEventos() {
-        const backup = await cache.match(eventBackupKey);
-
-        if (backup) {
-          const dados = await backup.json();
-
-          return Response.json({
-            ...dados,
-            golsky: {
-              ...dados.golsky,
-              desatualizado: true
-            }
-          }, {
-            headers: {
-              "Cache-Control": "no-store"
-            }
-          });
+        if (!valor ||
+            !/^[1-9]\d{0,11}$/.test(valor)) {
+          return json({
+            erro: "ID da partida invalido"
+          }, 400);
         }
 
-        return Response.json({
-          erro: "Eventos temporariamente indisponiveis",
-          response: []
-        }, {
-          status: 503,
-          headers: {
-            "Cache-Control": "no-store",
-            "Retry-After": String(RETRY_SECONDS)
-          }
-        });
+      } else {
+
+        tipo = "jogos";
+
+        valor =
+          url.searchParams.get("data") ??
+          url.searchParams.get("date") ??
+          hojeBrasil();
+
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(valor)) {
+          return json({
+            erro: "Data invalida. Use AAAA-MM-DD"
+          }, 400);
+        }
+
+        const data = new Date(
+          valor + "T00:00:00Z"
+        );
+
+        if (
+          !Number.isFinite(data.getTime()) ||
+          data.toISOString().slice(0, 10) !== valor
+        ) {
+          return json({
+            erro: "Data inexistente"
+          }, 400);
+        }
+
+        const diferenca = Math.round(
+          (
+            data.getTime() -
+            Date.parse(
+              hojeBrasil() + "T00:00:00Z"
+            )
+          ) / 86400000
+        );
+
+        if (diferenca < -365 || diferenca > 90) {
+          return json({
+            erro: "Data fora do periodo permitido",
+            limitePassado: 365,
+            limiteFuturo: 90
+          }, 400);
+        }
       }
 
       try {
 
-        const cached = await cache.match(eventKey);
-
-        if (cached) {
-          return cached;
-        }
-
-        if (await cache.match(eventRetryKey)) {
-          return await backupEventos();
-        }
-
-        const apiUrl = new URL(
-          "https://v3.football.api-sports.io/fixtures/events"
-        );
-
-        apiUrl.searchParams.set("fixture", id);
-
-        const resposta = await fetch(apiUrl.toString(), {
-          headers: {
-            "x-apisports-key":
-              env.API_FOOTBALL_KEY.trim()
-          }
-        });
-
-        const dados = await resposta.json();
-
-        if (
-          !resposta.ok ||
-          Object.keys(dados.errors || {}).length > 0 ||
-          !Array.isArray(dados.response)
-        ) {
-
-          console.error(
-            "GOLSKY EVENTOS:",
-            resposta.status,
-            JSON.stringify(dados.errors || {})
-          );
-
-          const diagnostico = Response.json({
-            erro: "Falha na API de eventos",
-            statusAPI: resposta.status,
-            detalhes: dados.errors,
-            parametros: dados.parameters,
-            resultados: dados.results
-          }, {
-            status: 502,
+        return await central.fetch(
+          "https://golsky.internal/consultar",
+          {
+            method: "POST",
             headers: {
-              "Cache-Control": "no-store"
-            }
-          });
-
-          await cache.put(
-            eventRetryKey,
-            new Response("aguarde", {
-              headers: {
-                "Cache-Control":
-                  "public, max-age=" + RETRY_SECONDS
-              }
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              tipo,
+              valor
             })
-          ).catch(() => {});
-
-          return diagnostico;
-        }
-
-        dados.golsky = {
-          partida: id,
-          atualizadoEm: new Date().toISOString(),
-          desatualizado: false
-        };
-
-        const resultado = Response.json(dados, {
-          headers: {
-            "Cache-Control":
-              "public, max-age=" + EVENTS_CACHE_SECONDS,
-            "X-GOLSKY-Cache": "FRESH"
           }
-        });
-
-        const backup = Response.json(dados, {
-          headers: {
-            "Cache-Control":
-              "public, max-age=" + BACKUP_SECONDS
-          }
-        });
-
-        await Promise.allSettled([
-          cache.put(eventKey, resultado.clone()),
-          cache.put(eventBackupKey, backup)
-        ]);
-
-        return resultado;
+        );
 
       } catch (erro) {
 
-        console.error("GOLSKY EVENTOS:", erro.message);
+        console.error(
+          "GOLSKY CENTRAL:", erro.message
+        );
 
-        try {
-          await cache.put(
-            eventRetryKey,
-            new Response("aguarde", {
-              headers: {
-                "Cache-Control":
-                  "public, max-age=" + RETRY_SECONDS
-              }
-            })
-          );
-        } catch {}
-
-        return await backupEventos();
-      }
-    }
-
-    // CALENDARIO MUNDIAL DE JOGOS
-    if (url.pathname === "/api/jogos") {
-
-      if (!env.API_FOOTBALL_KEY) {
-        return Response.json({
-          erro: "API nao configurada"
-        }, { status: 503 });
-      }
-
-      const partes = new Intl.DateTimeFormat("en-CA", {
-        timeZone: TIMEZONE,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit"
-      }).formatToParts(new Date());
-
-      const obter = tipo =>
-        partes.find(p => p.type === tipo).value;
-
-      const hoje =
-        obter("year") + "-" +
-        obter("month") + "-" +
-        obter("day");
-
-      // DATA ESCOLHIDA PELO USUARIO
-      const dataSolicitada =
-        url.searchParams.get("data") ??
-        url.searchParams.get("date") ??
-        hoje;
-
-      // VALIDACAO DA DATA
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(dataSolicitada)) {
-        return Response.json({
-          erro: "Data invalida. Use AAAA-MM-DD"
-        }, { status: 400 });
-      }
-
-      const dataObjeto = new Date(
-        dataSolicitada + "T00:00:00Z"
-      );
-
-      if (
-        !Number.isFinite(dataObjeto.getTime()) ||
-        dataObjeto.toISOString().slice(0, 10) !== dataSolicitada
-      ) {
-        return Response.json({
-          erro: "Data inexistente"
-        }, { status: 400 });
-      }
-
-      const hojeObjeto = new Date(
-        hoje + "T00:00:00Z"
-      );
-
-      const diferencaDias = Math.round(
-        (dataObjeto - hojeObjeto) / 86400000
-      );
-
-      // LIMITE PARA PROTEGER A API GRATUITA
-      if (diferencaDias < -365 || diferencaDias > 90) {
-        return Response.json({
-          erro: "Data fora do periodo permitido",
-          limitePassado: 365,
-          limiteFuturo: 90
-        }, { status: 400 });
-      }
-
-      // CACHE INTELIGENTE POR DATA
-      let tempoCache = CACHE_SECONDS;
-      let periodo = "hoje";
-
-      if (diferencaDias === -1) {
-        tempoCache = YESTERDAY_CACHE_SECONDS;
-        periodo = "ontem";
-      } else if (diferencaDias < -1) {
-        tempoCache = HISTORY_CACHE_SECONDS;
-        periodo = "historico";
-      } else if (diferencaDias > 0) {
-        tempoCache = FUTURE_CACHE_SECONDS;
-        periodo = "futuro";
-      }
-
-      const cache = caches.default;
-
-      const cacheKey = new Request(
-        url.origin + "/api/cache-jogos-v62/" +
-        dataSolicitada + "/" + periodo
-      );
-
-      const backupKey = new Request(
-        url.origin + "/api/cache-backup/" +
-        dataSolicitada
-      );
-
-      const retryKey = new Request(
-        url.origin + "/api/cache-retry/" +
-        dataSolicitada
-      );
-
-      async function usarBackup() {
-
-        const backup = await cache.match(backupKey);
-
-        if (backup) {
-          const dados = await backup.json();
-
-          return Response.json({
-            ...dados,
-            golsky: {
-              ...dados.golsky,
-              data: dataSolicitada,
-              periodo: periodo,
-              desatualizado: true,
-              aviso: "Exibindo ultima consulta disponivel"
-            }
-          }, {
-            headers: {
-              "Cache-Control": "no-store",
-              "X-GOLSKY-Cache": "BACKUP"
-            }
-          });
-        }
-
-        return Response.json({
-          erro: "Atualizacao temporariamente indisponivel",
-          data: dataSolicitada,
+        return json({
+          erro: "Central temporariamente indisponivel",
           response: []
-        }, {
-          status: 503,
-          headers: {
-            "Cache-Control": "no-store",
-            "Retry-After": String(RETRY_SECONDS)
-          }
-        });
-      }
-
-      try {
-
-        const cached = await cache.match(cacheKey);
-
-        if (cached) {
-          return cached;
-        }
-
-        const bloqueio = await cache.match(retryKey);
-
-        if (bloqueio) {
-          return await usarBackup();
-        }
-
-        const apiUrl = new URL(
-          "https://v3.football.api-sports.io/fixtures"
-        );
-
-        apiUrl.searchParams.set(
-          "date",
-          dataSolicitada
-        );
-
-        apiUrl.searchParams.set(
-          "timezone",
-          TIMEZONE
-        );
-
-        const resposta = await fetch(apiUrl.toString(), {
-          headers: {
-            "x-apisports-key":
-              env.API_FOOTBALL_KEY.trim()
-          }
-        });
-
-        const dados = await resposta.json();
-
-        if (
-          !resposta.ok ||
-          Object.keys(dados.errors || {}).length > 0 ||
-          !Array.isArray(dados.response)
-        ) {
-
-          console.error(
-            "GOLSKY API:",
-            resposta.status,
-            JSON.stringify(dados.errors || {})
-          );
-
-          throw new Error("Falha na API");
-        }
-
-        dados.golsky = {
-          atualizadoEm: new Date().toISOString(),
-          desatualizado: false,
-          data: dataSolicitada,
-          periodo: periodo,
-          cacheSegundos: tempoCache,
-          timezone: TIMEZONE
-        };
-
-        const resultado = Response.json(dados, {
-          headers: {
-            "Cache-Control":
-              "public, max-age=" + tempoCache,
-            "X-GOLSKY-Cache": "FRESH"
-          }
-        });
-
-        const backup = Response.json(dados, {
-          headers: {
-            "Cache-Control":
-              "public, max-age=" + BACKUP_SECONDS
-          }
-        });
-
-        await Promise.allSettled([
-          cache.put(cacheKey, resultado.clone()),
-          cache.put(backupKey, backup)
-        ]);
-
-        return resultado;
-
-      } catch (erro) {
-
-        console.error("GOLSKY:", erro.message);
-
-        try {
-          await cache.put(
-            retryKey,
-            new Response("aguarde", {
-              headers: {
-                "Cache-Control":
-                  "public, max-age=" + RETRY_SECONDS
-              }
-            })
-          );
-        } catch {}
-
-        return await usarBackup();
+        }, 503);
       }
     }
 
     // SITE PRINCIPAL
+
     return env.ASSETS.fetch(request);
   }
 };
