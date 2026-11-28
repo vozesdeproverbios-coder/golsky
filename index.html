@@ -2973,5 +2973,107 @@ aplicar();
 })();
 </script>
 <!-- FIM GOLSKY TV 11.0 - CALENDARIO -->
+
+<!-- GOLSKY TV 12.0 - TRADUCAO -->
+<script>
+(function(){
+
+const lista=document.getElementById("golsky-video-lista");
+const player=document.getElementById("golsky-video-player");
+
+if(!lista)return;
+
+const traducoes=[
+
+[/\bextended highlights\b/gi,"Melhores momentos completos"],
+[/\bclassic highlights\b/gi,"Melhores momentos históricos"],
+[/\bhighlights\s*-\s*extended\b/gi,"Melhores momentos completos"],
+[/\bhighlights\b/gi,"Melhores momentos"],
+[/\ball goals\b/gi,"Todos os gols"],
+[/\bgoals and assists\b/gi,"Gols e assistências"],
+[/\bfrom his own half to a shot on goal\b/gi,"Do próprio campo até a finalização"],
+[/\bwhen the celebration matches the goal\b/gi,"Quando a comemoração combina com o gol"],
+[/\bdoes it again\b/gi,"Faz de novo"],
+[/\bfirst goal\b/gi,"Primeiro gol"],
+[/\bwinning goal\b/gi,"Gol da vitória"],
+[/\blast minute goal\b/gi,"Gol no último minuto"],
+[/\bgoal of the day\b/gi,"Gol do dia"],
+[/\bgoal of the week\b/gi,"Gol da semana"],
+[/\bwhat a goal\b/gi,"Que golaço"],
+[/\bpenalty shootout\b/gi,"Disputa de pênaltis"],
+[/\bmatchday\b/gi,"Rodada"],
+[/\bfull match\b/gi,"Partida completa"],
+[/\bbest moments\b/gi,"Melhores momentos"],
+[/\bbest saves\b/gi,"Melhores defesas"],
+[/\bgoals\b/gi,"Gols"],
+[/\bgoal\b/gi,"Gol"],
+[/\btodos los goles\b/gi,"Todos os gols"],
+[/\bmejores momentos\b/gi,"Melhores momentos"],
+[/\bmarca el primer gol\b/gi,"Marca o primeiro gol"],
+[/\bdoce goles\b/gi,"Doze gols"],
+[/\bresumen del partido\b/gi,"Resumo da partida"],
+[/\bresumen\b/gi,"Resumo"],
+[/\bgolazo\b/gi,"Golaço"],
+[/\bgoles\b/gi,"Gols"],
+[/\bsintesi\b/gi,"Melhores momentos"]
+
+];
+
+function traduzir(texto){
+
+let resultado=texto;
+
+traducoes.forEach(([expressao,traducao])=>{
+
+resultado=resultado.replace(expressao,traducao);
+
+});
+
+return resultado;
+
+}
+
+function atualizar(){
+
+const titulos=[
+...lista.querySelectorAll(".golsky-video-card strong"),
+...(player?player.querySelectorAll("h3"):[])
+];
+
+titulos.forEach(titulo=>{
+
+if(titulo.dataset.traduzido)return;
+
+const original=titulo.textContent;
+
+titulo.dataset.traduzido="true";
+titulo.title=original;
+titulo.textContent=traduzir(original);
+
+});
+
+}
+
+const observer=new MutationObserver(atualizar);
+
+observer.observe(lista,{
+childList:true,
+subtree:true
+});
+
+if(player){
+
+observer.observe(player,{
+childList:true,
+subtree:true
+});
+
+}
+
+atualizar();
+
+})();
+</script>
+<!-- FIM GOLSKY TV 12.0 - TRADUCAO -->
 </body>
 </html>
